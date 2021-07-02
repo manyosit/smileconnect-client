@@ -1,13 +1,19 @@
 {
   "name": "@manyos/smileconnect-client",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "A client for our BMC ITSM API SMILEconnect. Use this to easily access your BMC ITSM Suite via nodejs or as reference implementation of a SMILEconnect client.",
   "main": "index.js",
   "scripts": {
     "start": "version=$npm_package_version node index.js",
     "test": "mocha --exit"
   },
-  "keywords": ["SMILEconnect", "ITSM", "BMC", "Remedy", "manyos"],
+  "keywords": [
+    "SMILEconnect",
+    "ITSM",
+    "BMC",
+    "Remedy",
+    "manyos"
+  ],
   "author": "Robert Hannemann",
   "license": "MIT",
   "dependencies": {
