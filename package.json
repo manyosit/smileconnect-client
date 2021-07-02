@@ -7,7 +7,7 @@
     "start": "version=$npm_package_version node index.js",
     "test": "mocha --exit"
   },
-  "keywords": ['SMILEconnect', 'ITSM', 'BMC', 'Remedy', 'manyos'],
+  "keywords": ["SMILEconnect", "ITSM", "BMC", "Remedy", "manyos"],
   "author": "Robert Hannemann",
   "license": "MIT",
   "dependencies": {
