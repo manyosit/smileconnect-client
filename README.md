@@ -11,7 +11,9 @@ Usage:
 ## Initialization
 
 ```javascript
-const SMILEconnect = require('@manyos/smileconnect')
+const sc = require('@manyos/smileconnect')
+
+const SMILEconnect = new sc.SmileconnectClient(process.env.CLIENT_ID, process.env.CLIENT_SECRET)
 ```
 
 ## Read Ticket
