@@ -8,7 +8,7 @@ class SmileconnectClient {
     params = {}
     constructor(params) {
         this.params = params;
-        ssoUtils.setupClient(process.env.CLIENT_ID, process.env.CLIENT_SECRET);
+        ssoUtils.setupClient(params.clientId, params.secret);
     }
 
     async getTicket(ticketType, ticketId, options) {
