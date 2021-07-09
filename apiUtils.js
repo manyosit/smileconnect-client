@@ -5,8 +5,6 @@ const fetch = require('node-fetch')
 const http = require('https');
 const httpAgent = new http.Agent();
 httpAgent.maxSockets = 5;
-ssoUtils.setupClient(process.env.CLIENT_ID, process.env.CLIENT_SECRET);
-
 
 function getOptions(method, token, body) {
     const options = {

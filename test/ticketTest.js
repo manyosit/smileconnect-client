@@ -2,7 +2,7 @@ const chai = require('chai');
 //const chaiHttp = require('chai-http');
 const should = chai.should();
 const log = require('@manyos/logger').setupLog('dataguard-hs-test');
-const app = require('../index')
+const sc = require('../index')
 
 function ticketBaseCheck(result) {
     result.should.have.property('data')
@@ -37,7 +37,10 @@ function taskBaseCheck(worklog) {
 
 describe('Ticket Tests', function () {
     let jobId;
+    let smileconnectClient = new sc.SmileconnectClient(process.env.CLIENT_ID, process.env.CLIENT_SECRET)
+
     before(function (done) {
+        // wait for sso to startup and discover sso details
         setTimeout(function(){
             done();
         }, 500);
@@ -50,7 +53,7 @@ describe('Ticket Tests', function () {
     const workOrderId = 'WO0000000001801'
 
     it ('it should read an incident', function (done) {
-        app.getTicket('incidents', incidentId).then(result => {
+        smileconnectClient.getTicket('incidents', incidentId).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
             done();
@@ -60,7 +63,7 @@ describe('Ticket Tests', function () {
     });
 
     it ('it should read incident worklogs', function (done) {
-        app.getTicketWorklogs('incidents', incidentId).then(result => {
+        smileconnectClient.getTicketWorklogs('incidents', incidentId).then(result => {
             log.debug('result', result)
             worklogsBaseCheck(result)
             done();
@@ -70,7 +73,7 @@ describe('Ticket Tests', function () {
     });
 
     it ('it should read a workorder', function (done) {
-        app.getTicket('workorders', workOrderId).then(result => {
+        smileconnectClient.getTicket('workorders', workOrderId).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
             done();
@@ -80,7 +83,7 @@ describe('Ticket Tests', function () {
     });
 
     it ('it should read workorder worklogs', function (done) {
-        app.getTicketWorklogs('workorders', workOrderId).then(result => {
+        smileconnectClient.getTicketWorklogs('workorders', workOrderId).then(result => {
             log.debug('result', result)
             worklogsBaseCheck(result)
             done();
@@ -90,7 +93,7 @@ describe('Ticket Tests', function () {
     });
 
     it ('it should read workorder tasks', function (done) {
-        app.getTicketTasks('workorders', workOrderId).then(result => {
+        smileconnectClient.getTicketTasks('workorders', workOrderId).then(result => {
             log.debug('result', result)
             ticketTasksBaseCheck(result)
             done();
