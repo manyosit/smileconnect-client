@@ -51,9 +51,20 @@ describe('Ticket Tests', function () {
 
     const incidentId = 'INC000000001401'
     const workOrderId = 'WO0000000001801'
+    const alternateClient = 'Horsti'
 
     it ('it should read an incident', function (done) {
         smileconnectClient.getTicket('incidents', incidentId).then(result => {
+            log.debug('result', result)
+            ticketBaseCheck(result)
+            done();
+        }).catch(error => {
+            done(error)
+        })
+    });
+
+    it ('it should read an incident as other client', function (done) {
+        smileconnectClient.getTicket('incidents', incidentId, {clientId: alternateClient}).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
             done();
