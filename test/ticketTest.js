@@ -51,7 +51,7 @@ describe('Ticket Tests', function () {
 
     const incidentId = 'INC000000001401'
     const workOrderId = 'WO0000000001801'
-    const alternateClient = 'Horsti'
+    const alternateClient = 'idm'
 
     it ('it should read an incident', function (done) {
         smileconnectClient.getTicket('incidents', incidentId).then(result => {
