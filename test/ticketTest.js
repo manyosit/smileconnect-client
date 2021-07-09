@@ -37,7 +37,14 @@ function taskBaseCheck(worklog) {
 
 describe('Ticket Tests', function () {
     let jobId;
-    let smileconnectClient = new sc.SmileconnectClient({clientId: process.env.CLIENT_ID, secret: process.env.CLIENT_SECRET})
+    const scOptions = {
+        clientId: process.env.CLIENT_ID,
+        secret: process.env.CLIENT_SECRET,
+        ssoUrl: process.env.SSO_URL,
+        smileConnectUrl: process.env.SMILECONNECT_URL
+    }
+
+    let smileconnectClient = new sc.SmileconnectClient(scOptions)
 
     before(function (done) {
         // wait for sso to startup and discover sso details

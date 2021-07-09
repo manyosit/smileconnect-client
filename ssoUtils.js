@@ -47,7 +47,7 @@ function getAccessToken() {
     });
 }
 
-function setupClient(id, secret) {
+function setupClient(id, secret, ssoUrl) {
     if (process.env.ISAPI_SSO_MANUAL==='TRUE') {
         const rawdata = fs.readFileSync('conf/ssoManualConfig.json');
         const manualConfig = JSON.parse(rawdata);
@@ -59,7 +59,7 @@ function setupClient(id, secret) {
         }); // => Client
         apiClient = client;
     } else {
-        Issuer.discover(process.env.SSO_URL) // => Promise
+        Issuer.discover(ssoUrl) // => Promise
             .then(function (ssoIssuer) {
                 log.debug('Discovered issuer %s %O', ssoIssuer.issuer, ssoIssuer.metadata);
                 const client = new ssoIssuer.Client({

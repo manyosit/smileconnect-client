@@ -23,7 +23,7 @@ function getOptions(method, token, body) {
 async function doApiRequest(urlString, method, options, data) {
     log.debug('Start API Request')
     //url = process.env.SMILECONNECT_URL + url
-    const url = new URL(process.env.SMILECONNECT_URL + urlString);
+    const url = new URL(urlString);
     //handle options
     if (options) {
         if (options.clientId) {
@@ -31,8 +31,6 @@ async function doApiRequest(urlString, method, options, data) {
         }
     }
 
-
-    
     const token = await ssoUtils.getAccessToken()
     const fetchOptions = getOptions(method, token, {data})
     log.debug('Prepared API Request', url, fetchOptions)
