@@ -21,6 +21,16 @@ class SmileconnectClient {
         return response
     }
 
+    async createTicket(ticketType, data, options) {
+        if (!allowedTicketTypes.includes(ticketType)) {
+            throw new Error(`ticketType should be one of ${allowedTicketTypes.toString()}`)
+        }
+        log.debug('create ticket')
+        const response = await apiUtils.doApiRequest(`${this.params.smileConnectUrl}/v1/${ticketType}`, 'POST', options, data);
+        log.debug('created ticket', response)
+        return response
+    }
+
     async getTicketWorklogs(ticketType, ticketId, options) {
         if (!allowedTicketTypes.includes(ticketType)) {
             throw new Error(`ticketType should be one of ${allowedTicketTypes.toString()}`)
@@ -28,6 +38,16 @@ class SmileconnectClient {
         log.debug('get ticket worklogs', ticketId)
         const response = await apiUtils.doApiRequest(`${this.params.smileConnectUrl}/v1/${ticketType}/${ticketId}/worklogs`, 'GET', options);
         log.debug('got ticket worklogs', response)
+        return response
+    }
+
+    async createTicketWorklog(ticketType, ticketId, data, options) {
+        if (!allowedTicketTypes.includes(ticketType)) {
+            throw new Error(`ticketType should be one of ${allowedTicketTypes.toString()}`)
+        }
+        log.debug('create ticket worklogs', ticketId)
+        const response = await apiUtils.doApiRequest(`${this.params.smileConnectUrl}/v1/${ticketType}/${ticketId}/worklogs`, 'POST', options, data);
+        log.debug('created ticket worklogs', response)
         return response
     }
 

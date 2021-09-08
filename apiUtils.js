@@ -17,6 +17,9 @@ function getOptions(method, token, body) {
             'Content-Type': 'application/json'
         }
     };
+    if (body) {
+        options.body = JSON.stringify(body)
+    }
     return options;
 }
 
@@ -32,7 +35,7 @@ async function doApiRequest(urlString, method, options, data) {
     }
 
     const token = await ssoUtils.getAccessToken()
-    const fetchOptions = getOptions(method, token, {data})
+    const fetchOptions = getOptions(method, token, data)
     log.debug('Prepared API Request', url, fetchOptions)
     const fetchResponse = await fetch(url, fetchOptions);
     log.debug('Fetched API Request', url, fetchOptions)

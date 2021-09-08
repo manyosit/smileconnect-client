@@ -70,6 +70,21 @@ describe('Ticket Tests', function () {
         })
     });
 
+    it ('it should create an incident', function (done) {
+        const ticketData = {
+            data: {
+                summary: "New Incident"
+            }
+        }
+        smileconnectClient.createTicket('incidents', ticketData).then(result => {
+            log.debug('result', result)
+            ticketBaseCheck(result)
+            done();
+        }).catch(error => {
+            done(error)
+        })
+    });
+
     it ('it should read an incident as other client', function (done) {
         smileconnectClient.getTicket('incidents', incidentId, {clientId: alternateClient}).then(result => {
             log.debug('result', result)
@@ -94,6 +109,22 @@ describe('Ticket Tests', function () {
         smileconnectClient.getTicket('workorders', workOrderId).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
+            done();
+        }).catch(error => {
+            done(error)
+        })
+    });
+
+    it ('it should create a workorder worklog', function (done) {
+        const worklogData = {
+            data: {
+                summary: "New Worklog",
+                text: "Some details"
+            }
+        }
+        smileconnectClient.createTicketWorklog('workorders', workOrderId, worklogData).then(result => {
+            log.debug('result', result)
+            worklogBaseCheck(result.data)
             done();
         }).catch(error => {
             done(error)
