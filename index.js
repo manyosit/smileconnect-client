@@ -100,6 +100,13 @@ class SmileconnectClient {
         log.debug('got task worklog', response)
         return response
     }
+
+    async validateCMDBUpdateRequest(data, options) {
+        log.debug('validate data')
+        const response = await apiUtils.doApiRequest(`${this.params.smileConnectUrl}/v1/cmdbobjects/validateUpdateRequest`, 'POST', options, data);
+        log.debug('data validated', response)
+        return response
+    }
 }
 
 module.exports = {

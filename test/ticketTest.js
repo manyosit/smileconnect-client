@@ -150,4 +150,34 @@ describe('Ticket Tests', function () {
             done(error)
         })
     });
+
+    it ('it should validate a ci update request', function (done) {
+        const updateData = {
+            "ciChanges": [
+                {
+                    "ciId": "OI-54C6AD623D5945DE9B02C3DAD35301D5",
+                    "attributes": {
+                        "tagNumber": null,
+                        "name": "Michel",
+                        "wurst": "Brot"
+                    }
+                },
+                {
+                    "ciId": "OI-54C6AD623D5945DE9B02C3DAD35301D5d",
+                    "attributes": {
+                        "tagNumber": null,
+                        "name": "Michel"
+                    }
+                }
+            ]
+        }
+        smileconnectClient.validateCMDBUpdateRequest(updateData).then(result => {
+            log.debug('result', result)
+            result.should.have.property('validationResult')
+            result.validationResult.should.be.an('array')
+            done();
+        }).catch(error => {
+            done(error)
+        })
+    });
 });
