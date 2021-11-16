@@ -10,7 +10,7 @@ function ticketBaseCheck(result) {
 }
 
 function worklogBaseCheck(worklog) {
-    worklog.should.have.property('id')
+    worklog.should.have.property('summary')
 }
 
 function worklogsBaseCheck(result) {
