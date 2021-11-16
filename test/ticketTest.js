@@ -85,6 +85,21 @@ describe('Ticket Tests', function () {
         })
     });
 
+    it ('it should update an incident', function (done) {
+        const ticketData = {
+            data: {
+                summary: "New Incident Update"
+            }
+        }
+        smileconnectClient.updateTicket('incidents', incidentId, ticketData).then(result => {
+            log.debug('result', result)
+            ticketBaseCheck(result)
+            done();
+        }).catch(error => {
+            done(error)
+        })
+    });
+
     it ('it should read an incident as other client', function (done) {
         smileconnectClient.getTicket('incidents', incidentId, {clientId: alternateClient}).then(result => {
             log.debug('result', result)

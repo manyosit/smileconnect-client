@@ -31,6 +31,16 @@ class SmileconnectClient {
         return response
     }
 
+    async updateTicket(ticketType, ticketId, data, options) {
+        if (!allowedTicketTypes.includes(ticketType)) {
+            throw new Error(`ticketType should be one of ${allowedTicketTypes.toString()}`)
+        }
+        log.debug('update ticket')
+        const response = await apiUtils.doApiRequest(`${this.params.smileConnectUrl}/v1/${ticketType}/${ticketId}`, 'PUT', options, data);
+        log.debug('updated ticket', response)
+        return response
+    }
+
     async getTicketWorklogs(ticketType, ticketId, options) {
         if (!allowedTicketTypes.includes(ticketType)) {
             throw new Error(`ticketType should be one of ${allowedTicketTypes.toString()}`)
