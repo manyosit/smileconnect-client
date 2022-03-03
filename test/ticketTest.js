@@ -50,7 +50,7 @@ describe('Ticket Tests', function () {
         // wait for sso to startup and discover sso details
         setTimeout(function(){
             done();
-        }, 500);
+        }, 1000);
     });
 
     let allSchema = [];
@@ -61,6 +61,7 @@ describe('Ticket Tests', function () {
     const alternateClient = 'idm'
 
     it ('it should read an incident', function (done) {
+        this.timeout(5000);
         smileconnectClient.getTicket('incidents', incidentId).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)

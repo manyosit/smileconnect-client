@@ -1,6 +1,6 @@
 const path = require('path');
 const log = require('@manyos/logger').setupLog('SMILEconnect_' + path.basename(__filename));
-const { Issuer } = require('openid-client');
+const { Issuer, errors} = require('openid-client');
 const fs = require('fs');
 let tokenSet = null;
 let apiClient = null;
@@ -9,6 +9,9 @@ function getAccessToken() {
     log.debug('get sso token');
     return new Promise((resolve, reject) => {
         //todo check if refresh token is expired
+        if (!apiClient) {
+            reject('SSO Client not ready')
+        }
         if (tokenSet == null || tokenSet == undefined || tokenSet.expired() === true) {
             log.debug('start grant', apiClient);
             apiClient
@@ -19,7 +22,10 @@ function getAccessToken() {
                     log.debug('got tokenset after grant', newToken);
                     tokenSet = newToken;
                     resolve(tokenSet.access_token);
-                });
+                }).catch(error => {
+                    log.error(error)
+                    reject(error);
+                })
         } else if (tokenSet.expired() === true) {
             log.debug('refresh token');
             apiClient.refresh(tokenSet).then(newToken => {
@@ -67,6 +73,9 @@ function setupClient(id, secret, ssoUrl) {
                     client_secret: secret
                 }); // => Client
                 apiClient = client;
+            }).catch(error => {
+                log.error(error)
+                throw (error)
             });
     }
 }
