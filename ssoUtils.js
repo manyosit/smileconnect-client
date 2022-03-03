@@ -74,8 +74,7 @@ function setupClient(id, secret, ssoUrl) {
                 }); // => Client
                 apiClient = client;
             }).catch(error => {
-                log.error(error)
-                throw (error)
+                log.error('SSO Client not ready', error)
             });
     }
 }
