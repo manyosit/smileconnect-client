@@ -54,7 +54,7 @@ function getAccessToken() {
     });
 }
 
-function setupClient(id, secret, ssoUrl) {
+async function setupClient(id, secret, ssoUrl) {
     if (process.env.ISAPI_SSO_MANUAL==='TRUE') {
         const rawdata = fs.readFileSync('conf/ssoManualConfig.json');
         const manualConfig = JSON.parse(rawdata);
@@ -66,18 +66,19 @@ function setupClient(id, secret, ssoUrl) {
         }); // => Client
         apiClient = client;
     } else {
-        Issuer.discover(ssoUrl) // => Promise
-            .then(function (ssoIssuer) {
-                log.debug('Discovered issuer %s %O', ssoIssuer.issuer, ssoIssuer.metadata);
-                const client = new ssoIssuer.Client({
-                    client_id: id,
-                    client_secret: secret
-                }); // => Client
-                apiClient = client;
-            }).catch(error => {
-                log.error('SSO Client not ready', error)
-            });
+        try {
+            const ssoIssuer = await Issuer.discover(ssoUrl) // => Promise
+            log.debug('Discovered issuer %s %O', ssoIssuer.issuer, ssoIssuer.metadata);
+            const client = new ssoIssuer.Client({
+                client_id: id,
+                client_secret: secret
+            }); // => Client
+            apiClient = client;
+        } catch (error) {
+            log.error ("Can't discover issuer", error)
+        }
     }
+    return apiClient;
 }
 
 module.exports = {
