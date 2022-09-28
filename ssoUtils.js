@@ -11,29 +11,9 @@ function getAccessToken() {
         //todo check if refresh token is expired
         if (!apiClient) {
             reject('SSO Client not ready')
-        }
-        if (tokenSet == null || tokenSet == undefined || tokenSet.expired() === true) {
-            log.debug('start grant', apiClient);
-            apiClient
-                .grant({
-                    grant_type: "client_credentials"
-                })
-                .then(newToken => {
-                    log.debug('got tokenset after grant', newToken);
-                    tokenSet = newToken;
-                    resolve(tokenSet.access_token);
-                }).catch(error => {
-                    log.error(error)
-                    reject(error);
-                })
-        } else if (tokenSet.expired() === true) {
-            log.debug('refresh token');
-            apiClient.refresh(tokenSet).then(newToken => {
-                log.debug('got tokenset after refresh', newToken);
-                tokenSet = newToken;
-                resolve(tokenSet.access_token);
-            }).catch( error => {
-                //try another grant if expired
+        } else {
+            if (tokenSet == null || tokenSet == undefined || tokenSet.expired() === true) {
+                log.debug('start grant', apiClient);
                 apiClient
                     .grant({
                         grant_type: "client_credentials"
@@ -42,13 +22,34 @@ function getAccessToken() {
                         log.debug('got tokenset after grant', newToken);
                         tokenSet = newToken;
                         resolve(tokenSet.access_token);
-                    });
-            });
-        } else if (tokenSet != null && tokenSet != undefined && tokenSet.expired() === false) {
-            log.debug('got valid token from cache', tokenSet);
-            resolve(tokenSet.access_token);
-        } else {
-            reject('Could not get token');
+                    }).catch(error => {
+                    log.error(error)
+                    reject(error);
+                })
+            } else if (tokenSet.expired() === true) {
+                log.debug('refresh token');
+                apiClient.refresh(tokenSet).then(newToken => {
+                    log.debug('got tokenset after refresh', newToken);
+                    tokenSet = newToken;
+                    resolve(tokenSet.access_token);
+                }).catch(error => {
+                    //try another grant if expired
+                    apiClient
+                        .grant({
+                            grant_type: "client_credentials"
+                        })
+                        .then(newToken => {
+                            log.debug('got tokenset after grant', newToken);
+                            tokenSet = newToken;
+                            resolve(tokenSet.access_token);
+                        });
+                });
+            } else if (tokenSet != null && tokenSet != undefined && tokenSet.expired() === false) {
+                log.debug('got valid token from cache', tokenSet);
+                resolve(tokenSet.access_token);
+            } else {
+                reject('Could not get token');
+            }
         }
     });
 }
