@@ -4,17 +4,20 @@ const ssoUtils = require('./ssoUtils')
 const fetch = require('node-fetch')
 const http = require('https');
 const httpAgent = new http.Agent();
+const { v4 } = require('uuid');
 
 httpAgent.maxSockets = 5;
 
 function getOptions(method, token, body) {
+    const requestId = v4();
     const options = {
         method: method,
         mode: 'cors',
         cache: 'no-cache',
         headers: {
             'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'X-Request-Id': requestId
         }
     };
     if (body) {
