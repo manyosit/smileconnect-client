@@ -86,6 +86,12 @@ async function getAccessToken() {
     return defaultSession.getAccessToken();
 }
 
+// Makes the given session the one behind the module functions (like setupClient of 1.9.2:
+// the instance created last wins, but only for these module functions).
+function setDefaultSession(session) {
+    defaultSession = session;
+}
+
 async function setupClient(id, secret, ssoUrl) {
     defaultSession = new SsoSession(id, secret, ssoUrl);
     return defaultSession.setup();
@@ -94,5 +100,6 @@ async function setupClient(id, secret, ssoUrl) {
 module.exports = {
     getAccessToken,
     setupClient,
+    setDefaultSession,
     SsoSession
 };

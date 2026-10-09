@@ -102,15 +102,27 @@ describe('SMILEconnect client (mock server)', function () {
             mock.last().headers.authorization.should.equal('Bearer adapter-token');
         });
 
-        it('still offers doApiRequest of the module', async function () {
-            // tokens come from the default session, so only check that a failing token fails like before
-            let error;
-            try {
-                await apiUtils.doApiRequest(mock.baseUrl + '/v1/incidents', 'GET');
-            } catch (e) {
-                error = e;
-            }
-            should.exist(error);
+        it('module functions use the instance created last, like in 1.9.x', async function () {
+            const ssoUtils = require('../ssoUtils');
+            new sc.SmileconnectClient({
+                clientId: 'module-client',
+                secret: 'module-secret',
+                ssoUrl: mock.ssoUrl,
+                smileConnectUrl: mock.baseUrl
+            });
+            (await ssoUtils.getAccessToken()).should.equal('token-for-module-client-module-secret');
+            mock.handler = () => ({status: 200, body: {data: {id: 'INC1'}}});
+            const result = await apiUtils.doApiRequest(mock.baseUrl + '/v1/incidents/INC1', 'GET', {clientId: 'x'});
+            result.should.deep.equal({data: {id: 'INC1'}});
+            mock.last().headers.authorization.should.equal('Bearer token-for-module-client-module-secret');
+            mock.last().query.should.deep.equal({clientId: 'x'});
+            // a second instance takes over the module functions, the first keeps its own token
+            const second = new sc.SmileconnectClient({
+                clientId: 'second', secret: 's2', ssoUrl: mock.ssoUrl, smileConnectUrl: mock.baseUrl
+            });
+            (await ssoUtils.getAccessToken()).should.equal('token-for-second-s2');
+            await second.getTicket('incidents', 'INC2');
+            mock.last().headers.authorization.should.equal('Bearer token-for-second-s2');
         });
 
         it('getTicketTasks ignores taskId and accepts options in its place', async function () {
@@ -602,6 +614,124 @@ describe('SMILEconnect client (mock server)', function () {
             }
             error.should.be.instanceOf(sc.SmileConnectError);
             should.not.exist(error.status);
+        });
+    });
+
+    describe('review fixes', function () {
+        it('throwOnError wraps token errors, default keeps them', async function () {
+            const failing = new sc.SmileconnectClient({
+                smileConnectUrl: mock.baseUrl,
+                tokenProvider: () => {
+                    throw 'SSO Client not ready. Cannot get token';
+                }
+            });
+            let error;
+            try {
+                await failing.getVersion();
+            } catch (e) {
+                error = e;
+            }
+            error.should.equal('SSO Client not ready. Cannot get token');
+            error = undefined;
+            try {
+                await failing.getVersion({throwOnError: true});
+            } catch (e) {
+                error = e;
+            }
+            error.should.be.instanceOf(sc.SmileConnectError);
+            should.not.exist(error.status);
+            error.cause.should.equal('SSO Client not ready. Cannot get token');
+            error.message.should.contain('SSO Client not ready');
+            mock.requests.length.should.equal(0);
+        });
+
+        it('throwOnError wraps an unreachable identity provider', async function () {
+            const c = new sc.SmileconnectClient({
+                clientId: 'x', secret: 'y', ssoUrl: 'http://127.0.0.1:1/sso', smileConnectUrl: mock.baseUrl, throwOnError: true
+            });
+            let error;
+            try {
+                await c.getVersion();
+            } catch (e) {
+                error = e;
+            }
+            error.should.be.instanceOf(sc.SmileConnectError);
+            should.not.exist(error.status);
+        });
+
+        it('flags the error so that scripts in a sandbox can check it without instanceof', async function () {
+            mock.handler = () => ({status: 404, body: {data: {}}});
+            let error;
+            try {
+                await client.getTicket('incidents', 'X', {throwOnError: true});
+            } catch (e) {
+                error = e;
+            }
+            error.name.should.equal('SmileConnectError');
+            error.isSmileConnectError.should.equal(true);
+        });
+
+        it('*All methods let the page values win over limit/offset of the body', async function () {
+            const all = Array.from({length: 7}, (_, i) => ({id: i}));
+            mock.handler = req => ({status: 200, body: {data: all.slice(req.json.offset, req.json.offset + req.json.limit)}});
+            const result = await client.searchTicketsAll('incidents',
+                {searchString: 'x', limit: 5, offset: 3, fields: ['id']}, {pageSize: 4});
+            result.length.should.equal(7);
+            mock.requests.map(r => [r.json.limit, r.json.offset]).should.deep.equal([[4, 0], [4, 4], [4, 7]]);
+            mock.requests[0].json.fields.should.deep.equal(['id']);
+        });
+
+        it('removes line breaks from the content type of a part', async function () {
+            await client.uploadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1,
+                {data: 'x', filename: 'a\r\nb.txt', contentType: 'text/plain\r\nX-Evil: 1'});
+            const text = mock.last().body.toString('latin1');
+            text.should.contain('Content-Type: text/plainX-Evil: 1\r\n\r\n');
+            text.should.not.contain('\r\nX-Evil: 1');
+            text.should.contain('filename="a__b.txt"');
+        });
+
+        it('getOpenApi without any client id fails clearly', async function () {
+            const noId = new sc.SmileconnectClient({smileConnectUrl: mock.baseUrl, tokenProvider: () => 't'});
+            let error;
+            try {
+                await noId.getOpenApi();
+            } catch (e) {
+                error = e;
+            }
+            error.message.should.contain('clientId');
+            mock.requests.length.should.equal(0);
+        });
+
+        describe('file name of a download', function () {
+            async function nameFor(disposition) {
+                mock.handler = () => ({status: 200, body: Buffer.from('x'), headers: {'Content-Disposition': disposition}});
+                return (await client.downloadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1)).fileName;
+            }
+
+            it('keeps ; inside a quoted name', async function () {
+                (await nameFor('attachment; filename="a;b.txt"')).should.equal('a;b.txt');
+            });
+
+            it('does not decode plain names', async function () {
+                (await nameFor('attachment; filename="100%25 done.txt"')).should.equal('100%25 done.txt');
+                (await nameFor('attachment; filename=plain.txt')).should.equal('plain.txt');
+                (await nameFor('attachment; filename="bad%zz.txt"')).should.equal('bad%zz.txt');
+            });
+
+            it('prefers filename* (RFC 5987) and decodes it', async function () {
+                (await nameFor("attachment; filename=\"fallback.txt\"; filename*=UTF-8''%C3%BCber%20uns.txt")).should.equal('über uns.txt');
+                (await nameFor("attachment; filename*=UTF-8''a%3Bb.txt; filename=\"x.txt\"")).should.equal('a;b.txt');
+            });
+        });
+
+        it('sends non-UTF-8 bytes and CRLF in a file exactly', async function () {
+            const content = Buffer.from([0xff, 0xfe, 0x00, 0x0d, 0x0a, 0x2d, 0x2d, 0x80, 0xc3, 0x28, 0x0d, 0x0a, 0x0d, 0x0a]);
+            await client.uploadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1, {data: content, filename: 'b.bin'});
+            const req = mock.last();
+            const boundary = req.headers['content-type'].split('boundary=')[1];
+            const start = req.body.indexOf(Buffer.from('\r\n\r\n')) + 4;
+            const end = req.body.lastIndexOf(Buffer.from('\r\n--' + boundary + '--\r\n'));
+            req.body.slice(start, end).equals(content).should.equal(true);
         });
     });
 

@@ -78,15 +78,25 @@ function fileNameFromHeaders(headers) {
     if (!disposition) {
         return undefined;
     }
-    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
-    if (!match) {
+    // filename* (RFC 5987, percent encoded) wins over filename
+    const extended = /filename\*\s*=\s*([^']*)'[^']*'("[^"]*"|[^;]*)/i.exec(disposition);
+    if (extended) {
+        const value = extended[2].trim().replace(/^"|"$/g, '');
+        try {
+            return decodeURIComponent(value);
+        } catch (e) {
+            return value;
+        }
+    }
+    // quoted name may contain ; and \" ; unquoted ends at ;
+    const plain = /filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]*))/i.exec(disposition);
+    if (!plain) {
         return undefined;
     }
-    try {
-        return decodeURIComponent(match[1]);
-    } catch (e) {
-        return match[1];
+    if (plain[1] !== undefined) {
+        return plain[1].replace(/\\(.)/g, '$1');
     }
+    return plain[2].trim();
 }
 
 /**
@@ -103,7 +113,20 @@ async function request(spec) {
 
     let token;
     if (spec.auth !== false) {
-        token = await spec.getToken();
+        try {
+            token = await spec.getToken();
+        } catch (error) {
+            if (throwOnError) {
+                const message = error && error.message ? error.message : String(error);
+                throw new SmileConnectError(`SMILEconnect could not get a token for ${spec.method} ${url}: ${message}`, {
+                    url: url.toString(),
+                    method: spec.method,
+                    code: error && error.code,
+                    cause: error
+                });
+            }
+            throw error;
+        }
     }
     const fetchOptions = getOptions(spec.method, token, spec.data, spec.rawBody)
     log.debug('Prepared API Request', url.toString())

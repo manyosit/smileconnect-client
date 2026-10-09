@@ -48,7 +48,7 @@ function buildMultipart(file, fieldName) {
     if (file && typeof file === 'object' && file.data !== undefined && typeof file.byteLength !== 'number') {
         data = file.data;
         filename = file.filename || filename;
-        contentType = file.contentType || contentType;
+        contentType = file.contentType ? String(file.contentType).replace(/[\r\n]/g, '') : contentType;
         if (typeof data === 'string' && file.encoding) {
             data = Buffer.from(data, file.encoding);
         }
@@ -80,6 +80,8 @@ class SmileconnectClient {
         } else {
             // credentials and token belong to this instance
             this.sso = new ssoUtils.SsoSession(params.clientId, params.secret, params.ssoUrl);
+            // as in 1.9.x: module functions (ssoUtils.getAccessToken, apiUtils.doApiRequest) use the last created instance
+            ssoUtils.setDefaultSession(this.sso);
             this.sso.setup().catch(error => log.error('SSO setup failed', error));
             this.getToken = () => this.sso.getAccessToken();
         }
@@ -151,14 +153,21 @@ class SmileconnectClient {
         return this._request('POST', `/v1/${ticketType}/search`, search.options, {data: search.body})
     }
 
-    /** Searches page by page and returns all records as an array (see paginate). */
+    /**
+     * Searches page by page and returns all records as an array (see paginate).
+     * limit/offset in the search body are ignored here; use options.pageSize, options.maxItems, options.offset.
+     */
     async searchTicketsAll(ticketType, searchBody, options) {
         checkTicketType(ticketType)
         const opts = Object.assign({}, options);
         const paging = {pageSize: opts.pageSize, maxItems: opts.maxItems, offset: opts.offset};
         delete opts.pageSize;
         delete opts.maxItems;
-        return this.fetchAll(page => this.searchTickets(ticketType, searchBody, Object.assign({}, opts, page)), paging)
+        // the page values win: limit and offset of the search body are removed
+        const body = typeof searchBody === 'string' ? {searchString: searchBody} : Object.assign({}, searchBody);
+        delete body.limit;
+        delete body.offset;
+        return this.fetchAll(page => this.searchTickets(ticketType, body, Object.assign({}, opts, page)), paging)
     }
 
     /** Lists page by page and returns all records as an array (see paginate). */
@@ -520,6 +529,9 @@ class SmileconnectClient {
     /** GET /v1/openapi/{clientId}: no token needed. Defaults to the clientId of this client. */
     async getOpenApi(clientId, options) {
         const id = clientId || this.params.clientId;
+        if (!id) {
+            throw new Error('getOpenApi needs a clientId: pass it as parameter or set clientId in the configuration')
+        }
         return this._request('GET', `/v1/openapi/${enc(id)}`, options, {auth: false})
     }
 

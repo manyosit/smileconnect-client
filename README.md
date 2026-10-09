@@ -80,7 +80,9 @@ try {
 }
 ```
 
-With `throwOnError`, network errors (connection refused, reset, DNS) are also a `SmileConnectError`, without `status`, with the original error as `error.cause`.
+With `throwOnError`, network errors (connection refused, reset, DNS) and token errors (identity provider not reachable, grant refused) are also a `SmileConnectError`, without `status`, with the original error as `error.cause`.
+
+**In scripts in a sandbox (vm2), for example SMILEconnect scripts:** `error instanceof SmileConnectError` does not work across the sandbox boundary. Check `error.isSmileConnectError === true` (or `error.name === 'SmileConnectError'`) instead.
 
 Status codes of the API: 400 malformed request (for example no file in an upload), 401 no valid token or no client configuration, 403 not allowed to change this object, 404 not found or outside the client's basequery, 422 validation failed, 429 rate limit, 500 Remedy refused the request or a script failed.
 
@@ -130,7 +132,7 @@ for await (const incident of smileconnect.paginate(page => smileconnect.listTick
 const persons = await smileconnect.fetchAll(page => smileconnect.searchPersons({ searchString: "'name' LIKE \"Bob%\"" }, page))
 ```
 
-`listTicketsAll(ticketType, options)` is the same for plain lists. `paginate` and `fetchAll` take any function that gets `{ limit, offset }` and returns a response with a `data` array.
+`listTicketsAll(ticketType, options)` is the same for plain lists. In the `*All` methods the page values win: a `limit` or `offset` in the search body is ignored; use `pageSize`, `maxItems` and `offset` in the options. `paginate` and `fetchAll` take any function that gets `{ limit, offset }` and returns a response with a `data` array.
 
 ## Worklogs
 
@@ -255,7 +257,7 @@ const answer = await smileconnect.callScriptEndpoint('hello', { name: 'Allen' })
 ## OpenAPI, version, health
 
 ```javascript
-const spec = await smileconnect.getOpenApi()            // specification of your own client; no token needed
+const spec = await smileconnect.getOpenApi()            // specification of your own client (needs clientId in the configuration); no token needed
 const other = await smileconnect.getOpenApi('other-client')
 const version = await smileconnect.getVersion()         // { app: 'api', version: '1.79.0' }
 const health = await smileconnect.getHealth()           // { status: 'ok' }, no token needed

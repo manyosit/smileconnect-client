@@ -17,10 +17,12 @@ Covers the current SMILEconnect API. Backwards compatible: every call that works
 - Per call options: `impersonateUser`, `include`, `limit`, `offset`, `query` (extra query parameters), next to `clientId`.
 - Error handling (opt-in): `throwOnError: true` on the client or per call throws a `SmileConnectError` with `status`, `body`, `url` for HTTP errors (and for network errors, without `status`). Without it the JSON body is returned as before.
 - `tokenProvider` constructor option: your own function that returns an access token, instead of the built-in SSO client credentials flow.
-- `SmileConnectError` is exported.
+- `SmileConnectError` is exported. It carries `isSmileConnectError = true` for checks across a vm2 sandbox boundary (where `instanceof` fails).
 
 ### Changed
 
+- As in 1.9.x, the instance created last also sets the session behind the module functions `ssoUtils.getAccessToken()` and `apiUtils.doApiRequest()`; the methods of an instance always use its own session.
+- With `throwOnError`, token errors are thrown as `SmileConnectError`, too.
 - Credentials and token belong to the client instance. Several clients with different credentials in one process no longer share (and overwrite) one token. Parallel calls share one token request.
 - `getTicketTasks`: the parameter `taskId` was never used. It is still accepted (calls stay valid) and ignored; options may also be given as third parameter.
 - Integration tests (`test/ticketTest.js`) only run when `CLIENT_ID`, `CLIENT_SECRET`, `SSO_URL` and `SMILECONNECT_URL` are set. `npm test` runs without a `.env`.

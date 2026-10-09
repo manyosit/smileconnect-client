@@ -10,6 +10,8 @@ class SmileConnectError extends Error {
         super(message);
         const d = details || {};
         this.name = 'SmileConnectError';
+        // instanceof does not work across a vm2 sandbox boundary; check this flag or name instead
+        this.isSmileConnectError = true;
         this.status = d.status;
         this.body = d.body;
         this.url = d.url;
