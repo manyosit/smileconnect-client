@@ -35,7 +35,9 @@ function taskBaseCheck(worklog) {
     worklog.should.have.property('id')
 }
 
-describe('Ticket Tests', function () {
+// Integration tests against a real SMILEconnect system: only with the environment variables set.
+const hasEnv = ['CLIENT_ID', 'CLIENT_SECRET', 'SSO_URL', 'SMILECONNECT_URL'].every(name => !!process.env[name]);
+(hasEnv ? describe : describe.skip)('Ticket Tests (integration, needs CLIENT_ID, CLIENT_SECRET, SSO_URL, SMILECONNECT_URL)', function () {
     let jobId;
     const scOptions = {
         clientId: process.env.CLIENT_ID,
@@ -44,9 +46,10 @@ describe('Ticket Tests', function () {
         smileConnectUrl: process.env.SMILECONNECT_URL
     }
 
-    let smileconnectClient = new sc.SmileconnectClient(scOptions)
+    let smileconnectClient;
 
     before(function (done) {
+        smileconnectClient = new sc.SmileconnectClient(scOptions)
         // wait for sso to startup and discover sso details
         setTimeout(function(){
             done();
@@ -290,6 +293,10 @@ describe('Ticket Tests', function () {
 
     });
 
+    // set by the create test; the update test changes this incident instead of a fixed one
+    // (old incidents get closed or reassigned, and then the client may no longer change them)
+    let createdIncidentId;
+
     it ('it should create an incident', function (done) {
         const ticketData = {
             data: {
@@ -299,6 +306,7 @@ describe('Ticket Tests', function () {
         smileconnectClient.createTicket('incidents', ticketData).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
+            createdIncidentId = result.data.id
             done();
         }).catch(error => {
             done(error)
@@ -306,14 +314,19 @@ describe('Ticket Tests', function () {
     });
 
     it ('it should update an incident', function (done) {
+        if (!createdIncidentId) {
+            // needs the incident of the create test
+            this.skip();
+        }
         const ticketData = {
             data: {
                 summary: "New Incident Update"
             }
         }
-        smileconnectClient.updateTicket('incidents', incidentId, ticketData).then(result => {
+        smileconnectClient.updateTicket('incidents', createdIncidentId, ticketData).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
+            result.data.id.should.equal(createdIncidentId)
             done();
         }).catch(error => {
             done(error)
