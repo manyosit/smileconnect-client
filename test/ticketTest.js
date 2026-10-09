@@ -35,7 +35,9 @@ function taskBaseCheck(worklog) {
     worklog.should.have.property('id')
 }
 
-describe('Ticket Tests', function () {
+// Integration tests against a real SMILEconnect system: only with the environment variables set.
+const hasEnv = ['CLIENT_ID', 'CLIENT_SECRET', 'SSO_URL', 'SMILECONNECT_URL'].every(name => !!process.env[name]);
+(hasEnv ? describe : describe.skip)('Ticket Tests (integration, needs CLIENT_ID, CLIENT_SECRET, SSO_URL, SMILECONNECT_URL)', function () {
     let jobId;
     const scOptions = {
         clientId: process.env.CLIENT_ID,
@@ -44,9 +46,10 @@ describe('Ticket Tests', function () {
         smileConnectUrl: process.env.SMILECONNECT_URL
     }
 
-    let smileconnectClient = new sc.SmileconnectClient(scOptions)
+    let smileconnectClient;
 
     before(function (done) {
+        smileconnectClient = new sc.SmileconnectClient(scOptions)
         // wait for sso to startup and discover sso details
         setTimeout(function(){
             done();
