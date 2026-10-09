@@ -14,7 +14,7 @@ npm install @manyos/smileconnect-client
 
 ## Initialization
 
-The client logs in with the *client credentials* flow of your OpenID Connect server, caches the token and requests a new one when it has expired. Credentials and token belong to the instance, so you can use several clients with different credentials in one process.
+The client logs in with the *client credentials* flow of your OpenID Connect server, caches the token and requests a new one shortly before it expires. Clients with the same credentials share one token (also when you create a new client per call); clients with different credentials in one process keep their tokens apart.
 
 ```javascript
 const { SmileconnectClient, SmileConnectError } = require('@manyos/smileconnect-client')
@@ -28,7 +28,7 @@ const smileconnect = new SmileconnectClient({
 })
 ```
 
-If you already have a token (or fetch it yourself), pass `tokenProvider` instead of `clientId`, `secret` and `ssoUrl`. The function may be async and is called before every request:
+If you already have a token (or fetch it yourself), pass `tokenProvider` instead of `clientId`, `secret` and `ssoUrl`. The function may be async and is called before every request. If it returns no token (`undefined`, `null`, `''`), the call fails without sending a request:
 
 ```javascript
 const smileconnect = new SmileconnectClient({
@@ -42,7 +42,7 @@ Unknown keys in the configuration (for example `type` in an adapter configuratio
 ## Conventions
 
 * **Bodies.** Methods that write take the body exactly as the API expects it, including the envelope: `{ data: { ... } }`. The client adds nothing. Script endpoints take any body.
-* **Results.** Every method resolves to the parsed JSON answer of the API (`{ data, included, links }`). Attachment downloads resolve to `{ data: Buffer, fileName, contentType, status }`.
+* **Results.** Every method resolves to the parsed JSON answer of the API (`{ data, included, links }`), `null` if the answer has no body (for example 204). Attachment downloads resolve to `{ data: Buffer, fileName, contentType, status }`.
 * **Options.** The last parameter of every method is an optional `options` object:
 
 | Option | Effect |
@@ -61,7 +61,7 @@ The attributes (`id`, `summary`, ...) are those of *your* client. The specificat
 
 ## Error handling
 
-By default (as in 1.9.x) a call resolves to the JSON body of the answer, also when the API answered with an error status (for example `{ error: '...' }` or `{ data: {} }` for 404). A network error rejects with the error of `node-fetch`.
+By default (as in 1.9.x) a call resolves to the JSON body of the answer, also when the API answered with an error status (for example `{ error: '...' }` or `{ data: {} }` for 404). A network error, or an answer that is no JSON (for example the HTML page of a proxy), rejects with the error of `node-fetch`.
 
 With `throwOnError: true`, on the client or per call (a per-call value wins), every HTTP status of 400 and above rejects with a `SmileConnectError`:
 
@@ -80,7 +80,7 @@ try {
 }
 ```
 
-With `throwOnError`, network errors (connection refused, reset, DNS) and token errors (identity provider not reachable, grant refused) are also a `SmileConnectError`, without `status`, with the original error as `error.cause`.
+With `throwOnError`, network errors (connection refused, reset, DNS) and token errors (identity provider not reachable, grant refused) are also a `SmileConnectError`, without `status`, with the original error as `error.cause`. A success status with a body that is no JSON (for example the login page of a proxy or SSO gateway) is a `SmileConnectError` with that `status` and the text as `body`.
 
 **In scripts in a sandbox (vm2), for example SMILEconnect scripts:** `error instanceof SmileConnectError` does not work across the sandbox boundary. Check `error.isSmileConnectError === true` (or `error.name === 'SmileConnectError'`) instead.
 
@@ -115,7 +115,7 @@ const found = await smileconnect.searchTickets('incidents', {
 
 ### Paging
 
-The API caps `limit` silently (client and installation limits). The helpers therefore advance by the number of records received and stop at the first empty page (one extra request). Sort by a stable attribute while paging.
+The API caps `limit` silently (client and installation limits). The helpers therefore advance by the number of records received and stop at the first empty page (one extra request). Sort by a stable attribute while paging. If a page is exactly the same as the page before, the helpers throw a `SmileConnectError` instead of looping (the endpoint seems to ignore `offset`); with `fields` that are not unique this can happen for real data, so include a unique field such as `id`.
 
 ```javascript
 // all records as an array; pageSize defaults to 100, maxItems is optional
@@ -172,13 +172,18 @@ A worklog has three attachment slots (1 to 3). Files are sent as `multipart/form
 
 ```javascript
 const fs = require('fs')
+const path = require('path')
 
 await smileconnect.uploadTicketWorklogAttachment('incidents', 'INC000000000217', 'WLG000000001240', 1, {
     data: fs.readFileSync('screenshot.png'), filename: 'screenshot.png', contentType: 'image/png'
 })
 
 const file = await smileconnect.downloadTicketWorklogAttachment('incidents', 'INC000000000217', 'WLG000000001240', 1, { detectMime: true })
-fs.writeFileSync(file.fileName, file.data)   // file = { data: Buffer, fileName, contentType, status }
+if (file.data) {   // file = { data: Buffer, fileName, contentType, status }
+    fs.writeFileSync(path.join(downloadDir, file.fileName || 'attachment'), file.data)
+} else {           // file = { status, error, body }
+    console.error('download failed', file.status, file.error)
+}
 
 // worklogs of tasks
 await smileconnect.uploadTaskWorklogAttachment('incidents', 'INC1', 'TAS1', 'WLG1', 1, Buffer.from('hello'))
@@ -189,7 +194,11 @@ await smileconnect.uploadCustomFormAttachment('enrollments', '000000000000115', 
 await smileconnect.downloadCustomFormAttachment('enrollments', '000000000000115', 'attachment1')
 ```
 
-`detectMime: true` makes the API return the real content type; without it the type is `application/octet-stream`. If the download fails (for example an empty slot) the result is the error body, or a `SmileConnectError` with `throwOnError`.
+`detectMime: true` makes the API return the real content type; without it the type is `application/octet-stream`. If the download fails (for example an empty slot) the result is `{ status, error, body }` without `data` (`error` is the message, `body` the error body of the API), or a `SmileConnectError` with `throwOnError`.
+
+`fileName` comes from the `Content-Disposition` header of the answer, that is from whoever uploaded the file. It is reduced to a plain file name (no directories, `:` and control characters replaced) and is `undefined` if nothing is left. Still join it to a directory of your choice instead of using it as a path.
+
+The `filename` of an upload is sent without directories. Names with characters outside ASCII are sent as UTF-8 (like a browser does) plus `filename*` (RFC 5987).
 
 ## Templates
 
@@ -248,7 +257,7 @@ const found = await smileconnect.searchCustomFormRecords('enrollments', { search
 
 ## Script endpoints
 
-The body is sent as it is (no `data` envelope unless the endpoint wants one). The answer is exactly what the script returns, `null` if the script returns nothing. The API answers `POST` only; `options.method` exists for the case that this changes.
+The body is sent as it is (no `data` envelope unless the endpoint wants one), also `false`, `0` or `''`; without a body (or with `null`) nothing is sent. The answer is exactly what the script returns, `null` if the script returns nothing. The API answers `POST` only; `options.method` exists for the case that this changes.
 
 ```javascript
 const answer = await smileconnect.callScriptEndpoint('hello', { name: 'Allen' })
@@ -259,6 +268,7 @@ const answer = await smileconnect.callScriptEndpoint('hello', { name: 'Allen' })
 ```javascript
 const spec = await smileconnect.getOpenApi()            // specification of your own client (needs clientId in the configuration); no token needed
 const other = await smileconnect.getOpenApi('other-client')
+const strict = await smileconnect.getOpenApi({ throwOnError: true })  // options without a clientId
 const version = await smileconnect.getVersion()         // { app: 'api', version: '1.79.0' }
 const health = await smileconnect.getHealth()           // { status: 'ok' }, no token needed
 ```

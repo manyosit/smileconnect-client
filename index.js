@@ -41,6 +41,10 @@ function prepareSearch(searchBody, options) {
     return {body, options: withoutPaging(opts)};
 }
 
+function encodeRfc5987(value) {
+    return encodeURIComponent(value).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
 function buildMultipart(file, fieldName) {
     let data = file;
     let filename = 'file';
@@ -61,8 +65,14 @@ function buildMultipart(file, fieldName) {
         data = Buffer.from(data);
     }
     const boundary = '----smileconnect' + Date.now().toString(16) + Math.random().toString(16).substring(2);
-    const safeName = String(filename).replace(/["\r\n]/g, '_');
-    const head = `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="${safeName}"\r\nContent-Type: ${contentType}\r\n\r\n`;
+    // a file name, not a path; quotes and control characters would break the header
+    const safeName = (String(filename).split(/[\\/]/).pop() || 'file').replace(/[\x00-\x1f\x7f"]/g, '_');
+    let disposition = `form-data; name="${fieldName}"; filename="${safeName}"`;
+    if (/[^\x20-\x7e]/.test(safeName)) {
+        // filename as raw UTF-8 like a browser sends it, filename* for parsers that read filename as latin1
+        disposition += `; filename*=UTF-8''${encodeRfc5987(safeName)}`;
+    }
+    const head = `--${boundary}\r\nContent-Disposition: ${disposition}\r\nContent-Type: ${contentType}\r\n\r\n`;
     const tail = `\r\n--${boundary}--\r\n`;
     return {
         contentType: `multipart/form-data; boundary=${boundary}`,
@@ -78,8 +88,8 @@ class SmileconnectClient {
             // own token source (e.g. a token you already have): no SSO discovery needed
             this.getToken = () => Promise.resolve(params.tokenProvider());
         } else {
-            // credentials and token belong to this instance
-            this.sso = new ssoUtils.SsoSession(params.clientId, params.secret, params.ssoUrl);
+            // instances with the same credentials share session and token, other credentials get their own
+            this.sso = ssoUtils.getSession(params.clientId, params.secret, params.ssoUrl);
             // as in 1.9.x: module functions (ssoUtils.getAccessToken, apiUtils.doApiRequest) use the last created instance
             ssoUtils.setDefaultSession(this.sso);
             this.sso.setup().catch(error => log.error('SSO setup failed', error));
@@ -115,7 +125,7 @@ class SmileconnectClient {
     async getTicket(ticketType, ticketId, options) {
         checkTicketType(ticketType)
         log.debug('get ticket', ticketId)
-        const response = await this._request('GET', `/v1/${ticketType}/${ticketId}`, options);
+        const response = await this._request('GET', `/v1/${ticketType}/${enc(ticketId)}`, options);
         log.debug('got ticket', response)
         return response
     }
@@ -131,7 +141,7 @@ class SmileconnectClient {
     async updateTicket(ticketType, ticketId, data, options) {
         checkTicketType(ticketType)
         log.debug('update ticket')
-        const response = await this._request('PUT', `/v1/${ticketType}/${ticketId}`, options, {data});
+        const response = await this._request('PUT', `/v1/${ticketType}/${enc(ticketId)}`, options, {data});
         log.debug('updated ticket', response)
         return response
     }
@@ -184,15 +194,16 @@ class SmileconnectClient {
      * Async iterator over all records of a paged call.
      * pageFn({limit, offset}) must return a response with a `data` array (any list or search method).
      * Stops at the first empty page, because the server may cap the limit without saying so.
+     * Throws if a page is the same as the one before (the endpoint ignores the offset).
      * paging: {pageSize = 100, maxItems = unlimited, offset = 0}
      */
     async * paginate(pageFn, paging) {
         const p = paging || {};
         const pageSize = p.pageSize || 100;
-        const maxItems = p.maxItems || Infinity;
+        const maxItems = p.maxItems === undefined || p.maxItems === null ? Infinity : p.maxItems;
         let offset = p.offset || 0;
         let count = 0;
-        let lastFirst;
+        let lastPage;
         while (count < maxItems) {
             const limit = Math.min(pageSize, maxItems - count);
             const page = await pageFn({limit, offset});
@@ -202,12 +213,14 @@ class SmileconnectClient {
             if (page.data.length === 0) {
                 return;
             }
-            // guard against endpoints that ignore the offset
-            const first = JSON.stringify(page.data[0]);
-            if (first === lastFirst && offset > (p.offset || 0)) {
-                return;
+            // guard against endpoints that ignore the offset. The whole page is compared, so records
+            // that look alike (e.g. fields: ['status']) do not end the paging; stopping silently would lose data.
+            const pageJson = JSON.stringify(page.data);
+            if (pageJson === lastPage) {
+                throw new SmileConnectError(`Paging stopped: the page at offset ${offset} is the same as the page before, ` +
+                    'the endpoint seems to ignore the offset. Add a unique field (e.g. id) to fields or set maxItems.', {body: page});
             }
-            lastFirst = first;
+            lastPage = pageJson;
             for (const item of page.data) {
                 yield item;
                 count++;
@@ -233,7 +246,7 @@ class SmileconnectClient {
     async getTicketWorklogs(ticketType, ticketId, options) {
         checkTicketType(ticketType)
         log.debug('get ticket worklogs', ticketId)
-        const response = await this._request('GET', `/v1/${ticketType}/${ticketId}/worklogs`, options);
+        const response = await this._request('GET', `/v1/${ticketType}/${enc(ticketId)}/worklogs`, options);
         log.debug('got ticket worklogs', response)
         return response
     }
@@ -241,7 +254,7 @@ class SmileconnectClient {
     async createTicketWorklog(ticketType, ticketId, data, options) {
         checkTicketType(ticketType)
         log.debug('create ticket worklogs', ticketId)
-        const response = await this._request('POST', `/v1/${ticketType}/${ticketId}/worklogs`, options, {data});
+        const response = await this._request('POST', `/v1/${ticketType}/${enc(ticketId)}/worklogs`, options, {data});
         log.debug('created ticket worklogs', response)
         return response
     }
@@ -249,7 +262,7 @@ class SmileconnectClient {
     async getTicketWorklog(ticketType, ticketId, worklogId, options) {
         checkTicketType(ticketType)
         log.debug('get ticket worklog', ticketId)
-        const response = await this._request('GET', `/v1/${ticketType}/${ticketId}/worklogs/${worklogId}`, options);
+        const response = await this._request('GET', `/v1/${ticketType}/${enc(ticketId)}/worklogs/${enc(worklogId)}`, options);
         log.debug('got ticket worklog', response)
         return response
     }
@@ -266,7 +279,7 @@ class SmileconnectClient {
             options = taskId;
         }
         log.debug('get tasks', ticketId)
-        const response = await this._request('GET', `/v1/${ticketType}/${ticketId}/tasks`, options);
+        const response = await this._request('GET', `/v1/${ticketType}/${enc(ticketId)}/tasks`, options);
         log.debug('got tasks', response)
         return response
     }
@@ -274,7 +287,7 @@ class SmileconnectClient {
     async getTicketTask(ticketType, ticketId, taskId, options) {
         checkTicketType(ticketType)
         log.debug('get task', ticketId)
-        const response = await this._request('GET', `/v1/${ticketType}/${ticketId}/tasks/${taskId}`, options);
+        const response = await this._request('GET', `/v1/${ticketType}/${enc(ticketId)}/tasks/${enc(taskId)}`, options);
         log.debug('got task', response)
         return response
     }
@@ -297,7 +310,7 @@ class SmileconnectClient {
     async getTaskWorklogs(ticketType, ticketId, taskId, options) {
         checkTicketType(ticketType)
         log.debug('get task worklogs', ticketId)
-        const response = await this._request('GET', `/v1/${ticketType}/${ticketId}/tasks/${taskId}/worklogs`, options);
+        const response = await this._request('GET', `/v1/${ticketType}/${enc(ticketId)}/tasks/${enc(taskId)}/worklogs`, options);
         log.debug('got task worklogs', response)
         return response
     }
@@ -305,7 +318,7 @@ class SmileconnectClient {
     async getTaskWorklog(ticketType, ticketId, taskId, worklogId, options) {
         checkTicketType(ticketType)
         log.debug('get task worklog', ticketId)
-        const response = await this._request('GET', `/v1/${ticketType}/${ticketId}/tasks/${taskId}/worklogs/${worklogId}`, options);
+        const response = await this._request('GET', `/v1/${ticketType}/${enc(ticketId)}/tasks/${enc(taskId)}/worklogs/${enc(worklogId)}`, options);
         log.debug('got task worklog', response)
         return response
     }
@@ -528,6 +541,10 @@ class SmileconnectClient {
 
     /** GET /v1/openapi/{clientId}: no token needed. Defaults to the clientId of this client. */
     async getOpenApi(clientId, options) {
+        if (options === undefined && clientId !== null && typeof clientId === 'object') {
+            options = clientId;
+            clientId = undefined;
+        }
         const id = clientId || this.params.clientId;
         if (!id) {
             throw new Error('getOpenApi needs a clientId: pass it as parameter or set clientId in the configuration')

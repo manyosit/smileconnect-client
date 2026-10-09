@@ -26,7 +26,8 @@ function getOptions(method, token, body, rawBody) {
     if (rawBody) {
         options.headers['Content-Type'] = rawBody.contentType;
         options.body = rawBody.data;
-    } else if (body) {
+    } else if (body !== undefined && body !== null) {
+        // false, 0 and '' are bodies, too
         options.body = JSON.stringify(body)
     }
     return options;
@@ -73,6 +74,13 @@ function parseBody(text) {
     }
 }
 
+// The name comes from the server and is meant to be used as a file name: only the last path segment,
+// without ':' (drive letters, alternate data streams) and control characters.
+function safeFileName(name) {
+    const base = String(name).split(/[\\/]/).pop().replace(/[\x00-\x1f\x7f:]/g, '_').trim();
+    return base === '' || base === '.' || base === '..' ? undefined : base;
+}
+
 function fileNameFromHeaders(headers) {
     const disposition = headers.get('content-disposition');
     if (!disposition) {
@@ -83,9 +91,9 @@ function fileNameFromHeaders(headers) {
     if (extended) {
         const value = extended[2].trim().replace(/^"|"$/g, '');
         try {
-            return decodeURIComponent(value);
+            return safeFileName(decodeURIComponent(value));
         } catch (e) {
-            return value;
+            return safeFileName(value);
         }
     }
     // quoted name may contain ; and \" ; unquoted ends at ;
@@ -94,16 +102,17 @@ function fileNameFromHeaders(headers) {
         return undefined;
     }
     if (plain[1] !== undefined) {
-        return plain[1].replace(/\\(.)/g, '$1');
+        return safeFileName(plain[1].replace(/\\(.)/g, '$1'));
     }
-    return plain[2].trim();
+    return safeFileName(plain[2].trim());
 }
 
 /**
  * Generic request used by the client.
  * spec: {url, method, options, data, rawBody, getToken, auth, throwOnError, response}
  *  - auth=false: no token (health, openapi)
- *  - response: 'json' (default), 'lenient' (empty body allowed) or 'binary' (file download)
+ *  - response: 'json' (default), 'lenient' (text that is no JSON allowed) or 'binary' (file download).
+ *    An empty body resolves to null in every mode but 'binary'.
  */
 async function request(spec) {
     const options = spec.options;
@@ -115,6 +124,10 @@ async function request(spec) {
     if (spec.auth !== false) {
         try {
             token = await spec.getToken();
+            if (!token) {
+                // a request without Authorization would only come back as 401 and hide the cause
+                throw new Error(`no access token: the token source returned ${token === '' ? 'an empty string' : String(token)}`);
+            }
         } catch (error) {
             if (throwOnError) {
                 const message = error && error.message ? error.message : String(error);
@@ -148,28 +161,13 @@ async function request(spec) {
     log.debug('Got Response Code', fetchResponse.status)
 
     const mode = spec.response || 'json';
-    if (mode === 'json' && !throwOnError) {
-        // behaviour of version 1.9.2
-        return await fetchResponse.json()
-    }
-
-    let result;
-    let body;
+    let buffer;
+    let text;
     try {
         if (mode === 'binary') {
-            const buffer = await fetchResponse.buffer();
-            if (fetchResponse.ok) {
-                result = {
-                    data: buffer,
-                    fileName: fileNameFromHeaders(fetchResponse.headers),
-                    contentType: fetchResponse.headers.get('content-type'),
-                    status: fetchResponse.status
-                };
-            } else {
-                body = parseBody(buffer.toString('utf8'));
-            }
+            buffer = await fetchResponse.buffer();
         } else {
-            body = parseBody(await fetchResponse.text());
+            text = await fetchResponse.text();
         }
     } catch (error) {
         if (throwOnError) {
@@ -184,14 +182,53 @@ async function request(spec) {
         throw error;
     }
 
-    if (!fetchResponse.ok && throwOnError) {
-        const detail = errorMessageFromBody(body);
-        throw new SmileConnectError(
-            `SMILEconnect API error ${fetchResponse.status} on ${spec.method} ${url}` + (detail ? `: ${detail}` : ''),
-            {status: fetchResponse.status, body, url: url.toString(), method: spec.method}
-        );
+    let body;
+    if (mode === 'binary') {
+        if (fetchResponse.ok) {
+            return {
+                data: buffer,
+                fileName: fileNameFromHeaders(fetchResponse.headers),
+                contentType: fetchResponse.headers.get('content-type'),
+                status: fetchResponse.status
+            };
+        }
+        body = parseBody(buffer.toString('utf8'));
+    } else if (text === '') {
+        // e.g. 204: the call worked, there is just nothing to return
+        body = null;
+    } else {
+        try {
+            body = JSON.parse(text);
+        } catch (error) {
+            if (mode === 'json' && !throwOnError) {
+                // behaviour of version 1.9.2 (fetchResponse.json())
+                throw new fetch.FetchError(`invalid json response body at ${fetchResponse.url} reason: ${error.message}`, 'invalid-json');
+            }
+            if (mode === 'json' && fetchResponse.ok) {
+                // e.g. the login page of a proxy: no API answer, although the status says so
+                throw new SmileConnectError(
+                    `SMILEconnect API answered ${fetchResponse.status} without JSON on ${spec.method} ${url}: ${errorMessageFromBody(text)}`,
+                    {status: fetchResponse.status, body: text, url: url.toString(), method: spec.method}
+                );
+            }
+            body = text;
+        }
     }
-    return result !== undefined ? result : body;
+
+    if (!fetchResponse.ok) {
+        const detail = errorMessageFromBody(body);
+        if (throwOnError) {
+            throw new SmileConnectError(
+                `SMILEconnect API error ${fetchResponse.status} on ${spec.method} ${url}` + (detail ? `: ${detail}` : ''),
+                {status: fetchResponse.status, body, url: url.toString(), method: spec.method}
+            );
+        }
+        if (mode === 'binary') {
+            // no data key, so that a failed download cannot be mistaken for a file
+            return {status: fetchResponse.status, error: detail || `HTTP ${fetchResponse.status}`, body};
+        }
+    }
+    return body;
 }
 
 // Function of version 1.9.2, still available.

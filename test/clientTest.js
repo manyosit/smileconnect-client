@@ -214,11 +214,31 @@ describe('SMILEconnect client (mock server)', function () {
             error.body.should.deep.equal({error: 'bad'});
         });
 
-        it('does not loop when the server ignores the offset', async function () {
+        it('does not loop when the server ignores the offset, and says so', async function () {
             mock.handler = () => ({status: 200, body: {data: [{id: 1}, {id: 2}]}});
-            const result = await client.listTicketsAll('incidents', {pageSize: 2});
-            result.length.should.equal(2);
+            let error;
+            try {
+                await client.listTicketsAll('incidents', {pageSize: 2});
+            } catch (e) {
+                error = e;
+            }
+            error.should.be.instanceOf(sc.SmileConnectError);
+            error.message.should.contain('ignore the offset');
             mock.requests.length.should.equal(2);
+        });
+
+        it('does not stop early when records look alike', async function () {
+            // only a non-unique field: page 1 and 2 start with the same record
+            const all = Array.from({length: 30}, (_, i) => ({status: i < 15 ? 'Assigned' : 'Closed' + i}));
+            mock.handler = req => ({status: 200, body: {data: all.slice(req.json.offset, req.json.offset + req.json.limit)}});
+            const result = await client.searchTicketsAll('incidents', {searchString: 'x', fields: ['status']}, {pageSize: 10});
+            result.should.deep.equal(all);
+        });
+
+        it('maxItems 0 returns nothing', async function () {
+            const result = await client.listTicketsAll('incidents', {maxItems: 0});
+            result.should.deep.equal([]);
+            mock.requests.length.should.equal(0);
         });
     });
 
@@ -332,10 +352,17 @@ describe('SMILEconnect client (mock server)', function () {
             mock.last().path.should.equal('/v1/customForms/enrollments/115/attachments/attachment1');
         });
 
-        it('returns the error body of a missing attachment, or throws with throwOnError', async function () {
+        it('returns status and error of a missing attachment (no data), or throws with throwOnError', async function () {
             mock.handler = () => ({status: 404, body: {error: 'not found'}});
             const result = await client.downloadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1);
-            result.should.deep.equal({error: 'not found'});
+            result.should.deep.equal({status: 404, error: 'not found', body: {error: 'not found'}});
+            // a body that has a data key must not look like a file
+            mock.handler = () => ({status: 404, body: {data: {}}});
+            const empty = await client.downloadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 2);
+            should.not.exist(empty.data);
+            empty.status.should.equal(404);
+            empty.error.should.be.a('string');
+            mock.handler = () => ({status: 404, body: {error: 'not found'}});
             let error;
             try {
                 await client.downloadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1, {throwOnError: true});
@@ -735,6 +762,100 @@ describe('SMILEconnect client (mock server)', function () {
         });
     });
 
+    describe('review fixes 2', function () {
+        async function rejection(promise) {
+            try {
+                await promise;
+            } catch (e) {
+                return e;
+            }
+            throw new Error('expected a rejection');
+        }
+
+        it('fails without a request when the token provider returns no token', async function () {
+            for (const token of [undefined, null, '']) {
+                const noToken = new sc.SmileconnectClient({smileConnectUrl: mock.baseUrl, tokenProvider: () => token});
+                const error = await rejection(noToken.getVersion());
+                error.message.should.contain('no access token');
+                const wrapped = await rejection(noToken.getVersion({throwOnError: true}));
+                wrapped.should.be.instanceOf(sc.SmileConnectError);
+                wrapped.message.should.contain('no access token');
+            }
+            mock.requests.length.should.equal(0);
+        });
+
+        it('resolves an empty answer (204) to null, with and without throwOnError', async function () {
+            mock.handler = () => ({status: 204});
+            expect(await client.updateCmdbObject('OI-1', {data: {}})).to.equal(null);
+            expect(await client.updateCmdbObject('OI-1', {data: {}}, {throwOnError: true})).to.equal(null);
+            expect(await client.updateTicket('incidents', 'INC1', {data: {}})).to.equal(null);
+        });
+
+        it('a 2xx answer that is no JSON rejects (FetchError as in 1.9.2, SmileConnectError with throwOnError)', async function () {
+            mock.handler = () => ({status: 200, body: '<html>login</html>', headers: {'Content-Type': 'text/html'}});
+            const error = await rejection(client.getTicket('incidents', 'INC1'));
+            error.name.should.equal('FetchError');
+            error.type.should.equal('invalid-json');
+            const wrapped = await rejection(client.getTicket('incidents', 'INC1', {throwOnError: true}));
+            wrapped.should.be.instanceOf(sc.SmileConnectError);
+            wrapped.status.should.equal(200);
+            wrapped.body.should.equal('<html>login</html>');
+            wrapped.message.should.contain('without JSON');
+            // script endpoints may answer text
+            (await client.callScriptEndpoint('x', {}, {throwOnError: true})).should.equal('<html>login</html>');
+        });
+
+        it('returns only a plain file name from Content-Disposition', async function () {
+            async function nameFor(disposition) {
+                mock.handler = () => ({status: 200, body: Buffer.from('x'), headers: {'Content-Disposition': disposition}});
+                return (await client.downloadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1)).fileName;
+            }
+            (await nameFor("attachment; filename*=UTF-8''..%2F..%2F.ssh%2Fauthorized_keys")).should.equal('authorized_keys');
+            (await nameFor('attachment; filename="..\\\\..\\\\evil.txt"')).should.equal('evil.txt');
+            (await nameFor('attachment; filename="/etc/passwd"')).should.equal('passwd');
+            (await nameFor('attachment; filename="C:evil.txt"')).should.equal('C_evil.txt');
+            expect(await nameFor('attachment; filename=".."')).to.equal(undefined);
+            expect(await nameFor("attachment; filename*=UTF-8''..%2F")).to.equal(undefined);
+        });
+
+        it('sends non-ASCII file names as UTF-8 plus filename*, and no path', async function () {
+            await client.uploadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1, {data: 'x', filename: "Übersicht (1).pdf"});
+            const head = mock.last().body.toString('utf8');
+            head.should.contain(`filename="Übersicht (1).pdf"; filename*=UTF-8''%C3%9Cbersicht%20%281%29.pdf\r\n`);
+            await client.uploadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1, {data: 'x', filename: 'C:\\temp\\a.txt'});
+            const ascii = mock.last().body.toString('utf8');
+            ascii.should.contain('filename="a.txt"\r\n');
+            ascii.should.not.contain('filename*');
+        });
+
+        it('encodes ids of the methods of 1.9.x, too', async function () {
+            await client.getTicket('incidents', 'a/b?c#d');
+            await client.getTicketTask('incidents', 'INC1', '../persons/X');
+            await client.getTaskWorklog('incidents', 'INC1', 'TAS1', 'W L');
+            mock.requests.map(r => r.path).should.deep.equal([
+                '/v1/incidents/a%2Fb%3Fc%23d',
+                '/v1/incidents/INC1/tasks/..%2Fpersons%2FX',
+                '/v1/incidents/INC1/tasks/TAS1/worklogs/W%20L'
+            ]);
+            mock.requests.forEach(r => r.query.should.deep.equal({}));
+        });
+
+        it('sends false, 0 and an empty string as script endpoint body', async function () {
+            for (const body of [false, 0, '']) {
+                await client.callScriptEndpoint('x', body);
+                mock.last().body.toString().should.equal(JSON.stringify(body));
+            }
+            await client.callScriptEndpoint('x');
+            mock.last().body.length.should.equal(0);
+        });
+
+        it('getOpenApi takes options as first parameter', async function () {
+            mock.handler = () => ({status: 200, body: {openapi: '3.0.0'}});
+            (await client.getOpenApi({throwOnError: true})).should.deep.equal({openapi: '3.0.0'});
+            mock.last().path.should.equal('/v1/openapi/test-client');
+        });
+    });
+
     describe('SSO per instance (identity provider mocked locally)', function () {
         function ssoClient(clientId, secret) {
             return new sc.SmileconnectClient({
@@ -761,9 +882,16 @@ describe('SMILEconnect client (mock server)', function () {
             mock.tokenRequests.length.should.equal(1);
         });
 
+        it('shares discovery between parallel calls right after the constructor', async function () {
+            const c = ssoClient('client-d', 'secret-d');
+            await Promise.all([1, 2, 3, 4, 5, 6, 7, 8].map(i => c.getTicket('incidents', 'INC' + i)));
+            mock.discoveryRequests.should.equal(1);
+            mock.tokenRequests.length.should.equal(1);
+        });
+
         it('keeps credentials and tokens of several instances apart', async function () {
-            const a = ssoClient('client-a', 'secret-a');
-            const b = ssoClient('client-b', 'secret-b');
+            const a = ssoClient('client-k', 'secret-k');
+            const b = ssoClient('client-l', 'secret-l');
             await a.getTicket('incidents', 'A1');
             await b.getTicket('incidents', 'B1');
             await a.getTicket('incidents', 'A2');
@@ -772,25 +900,56 @@ describe('SMILEconnect client (mock server)', function () {
             mock.requests.forEach(r => {
                 byPath[r.path] = r.headers.authorization;
             });
-            byPath['/v1/incidents/A1'].should.equal('Bearer token-for-client-a-secret-a');
-            byPath['/v1/incidents/A2'].should.equal('Bearer token-for-client-a-secret-a');
-            byPath['/v1/incidents/B1'].should.equal('Bearer token-for-client-b-secret-b');
-            byPath['/v1/incidents/B2'].should.equal('Bearer token-for-client-b-secret-b');
+            byPath['/v1/incidents/A1'].should.equal('Bearer token-for-client-k-secret-k');
+            byPath['/v1/incidents/A2'].should.equal('Bearer token-for-client-k-secret-k');
+            byPath['/v1/incidents/B1'].should.equal('Bearer token-for-client-l-secret-l');
+            byPath['/v1/incidents/B2'].should.equal('Bearer token-for-client-l-secret-l');
             mock.tokenRequests.length.should.equal(2);
         });
 
-        it('requests a new token when it is expired', async function () {
+        it('instances with the same credentials share one token, like the module wide token of 1.9.2', async function () {
+            for (let i = 0; i < 5; i++) {
+                await ssoClient('client-s', 'secret-s').getTicket('incidents', 'INC' + i);
+            }
+            mock.discoveryRequests.should.equal(1);
+            mock.tokenRequests.length.should.equal(1);
+            // a different secret is a different session
+            await ssoClient('client-s', 'other-secret').getTicket('incidents', 'X');
+            mock.tokenRequests.length.should.equal(2);
+        });
+
+        it('requests a new token when it is expired or about to expire', async function () {
+            const c = ssoClient('client-e', 'secret-e');
+            await c.getTicket('incidents', 'INC1');
+            await c.getTicket('incidents', 'INC2');
+            mock.tokenRequests.length.should.equal(1);
+            const now = Math.floor(Date.now() / 1000);
+            // still valid for 10 seconds: within the margin, renewed before it can expire in flight
+            c.sso.tokenSet.expires_at = now + 10;
+            await c.getTicket('incidents', 'INC3');
+            mock.tokenRequests.length.should.equal(2);
+            // expired
+            c.sso.tokenSet.expires_at = now - 1;
+            await c.getTicket('incidents', 'INC4');
+            mock.tokenRequests.length.should.equal(3);
+            mock.requests.forEach(r => r.headers.authorization.should.equal('Bearer token-for-client-e-secret-e'));
+            // the new token is used from now on
+            await c.getTicket('incidents', 'INC5');
+            mock.tokenRequests.length.should.equal(3);
+        });
+
+        it('fails when the identity provider issues a token that is already expired', async function () {
             mock.tokenLifetime = 0;
             try {
-                const c = ssoClient('client-e', 'secret-e');
+                const c = ssoClient('client-z', 'secret-z');
                 let error;
                 try {
                     await c.getTicket('incidents', 'INC1');
                 } catch (e) {
                     error = e;
                 }
-                // a token that is expired right away cannot be used
-                should.exist(error);
+                error.should.equal('Could not get token');
+                mock.requests.length.should.equal(0);
             } finally {
                 mock.tokenLifetime = 300;
             }

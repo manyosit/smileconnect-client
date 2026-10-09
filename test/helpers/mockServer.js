@@ -6,6 +6,7 @@ const http = require('http');
  *
  * mock.requests         every API request: {method, path, query, headers, body (Buffer), json}
  * mock.tokenRequests    every token request: {clientId, secret}
+ * mock.discoveryRequests number of issuer discovery requests
  * mock.handler          function(req) -> {status, body, headers} (body: object/array = JSON, string/Buffer = raw)
  *                       default: 200 {"data":{}}
  */
@@ -13,6 +14,7 @@ async function startMock() {
     const mock = {
         requests: [],
         tokenRequests: [],
+        discoveryRequests: 0,
         handler: () => ({status: 200, body: {data: {}}}),
         tokenLifetime: 300
     };
@@ -26,6 +28,7 @@ async function startMock() {
 
             // identity provider
             if (url.pathname === '/sso/.well-known/openid-configuration') {
+                mock.discoveryRequests++;
                 return sendJson(res, 200, {
                     issuer: mock.baseUrl + '/sso',
                     token_endpoint: mock.baseUrl + '/sso/token',
@@ -97,6 +100,7 @@ async function startMock() {
     mock.reset = () => {
         mock.requests.length = 0;
         mock.tokenRequests.length = 0;
+        mock.discoveryRequests = 0;
         mock.handler = () => ({status: 200, body: {data: {}}});
     };
     mock.last = () => mock.requests[mock.requests.length - 1];

@@ -2,7 +2,7 @@
 
 ## 1.10.0
 
-Covers the current SMILEconnect API. Backwards compatible: every call that works with 1.9.x works unchanged and returns the same result. New behaviour is opt-in.
+Covers the current SMILEconnect API. Backwards compatible: calls that work with 1.9.x work unchanged and return the same result; the exceptions are edge cases listed under "Changed" (ids with special characters, answers without body). New behaviour is opt-in.
 
 ### Added
 
@@ -23,9 +23,23 @@ Covers the current SMILEconnect API. Backwards compatible: every call that works
 
 - As in 1.9.x, the instance created last also sets the session behind the module functions `ssoUtils.getAccessToken()` and `apiUtils.doApiRequest()`; the methods of an instance always use its own session.
 - With `throwOnError`, token errors are thrown as `SmileConnectError`, too.
-- Credentials and token belong to the client instance. Several clients with different credentials in one process no longer share (and overwrite) one token. Parallel calls share one token request.
+- Credentials and token belong to the session of a set of credentials. Several clients with different credentials in one process no longer share (and overwrite) one token; clients with the same credentials share one token, as in 1.9.x (also when a client is created per call). Parallel calls share one issuer discovery and one token request.
+- The token is renewed shortly before it expires (30 seconds, at most half of its lifetime), so it cannot expire while a request is on its way.
+- Ids in the path are URL encoded in all methods, also in those of 1.9.x (`getTicket`, `updateTicket`, worklogs, tasks). Normal ids are not changed; an id with `/`, `?`, `#` or `%` now addresses that id instead of another path or query.
+- An answer without body (for example 204) resolves to `null`; 1.9.x rejected with `invalid json response body`. Other answers that are no JSON still reject with the `FetchError` of `node-fetch`.
 - `getTicketTasks`: the parameter `taskId` was never used. It is still accepted (calls stay valid) and ignored; options may also be given as third parameter.
 - Integration tests (`test/ticketTest.js`) only run when `CLIENT_ID`, `CLIENT_SECRET`, `SSO_URL` and `SMILECONNECT_URL` are set. `npm test` runs without a `.env`.
+
+### Behaviour of the new methods
+
+- Paging helpers throw a `SmileConnectError` if a page is the same as the page before (the endpoint ignores the offset), instead of stopping silently. `maxItems: 0` returns no records.
+- A failed attachment download resolves to `{ status, error, body }` (no `data`), so that it cannot be mistaken for a file.
+- `fileName` of a download is a plain file name: no directories, `:` and control characters replaced.
+- Upload file names are sent without directories; names outside ASCII are sent as UTF-8 plus `filename*` (RFC 5987).
+- A `tokenProvider` that returns no token makes the call fail before a request is sent.
+- With `throwOnError`, a success status whose body is no JSON throws a `SmileConnectError` (script endpoints may answer text).
+- `callScriptEndpoint` sends `false`, `0` and `''` as body.
+- `getOpenApi(options)` accepts the options as first parameter.
 
 ### Tests
 
