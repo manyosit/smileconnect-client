@@ -293,6 +293,10 @@ const hasEnv = ['CLIENT_ID', 'CLIENT_SECRET', 'SSO_URL', 'SMILECONNECT_URL'].eve
 
     });
 
+    // set by the create test; the update test changes this incident instead of a fixed one
+    // (old incidents get closed or reassigned, and then the client may no longer change them)
+    let createdIncidentId;
+
     it ('it should create an incident', function (done) {
         const ticketData = {
             data: {
@@ -302,6 +306,7 @@ const hasEnv = ['CLIENT_ID', 'CLIENT_SECRET', 'SSO_URL', 'SMILECONNECT_URL'].eve
         smileconnectClient.createTicket('incidents', ticketData).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
+            createdIncidentId = result.data.id
             done();
         }).catch(error => {
             done(error)
@@ -309,14 +314,19 @@ const hasEnv = ['CLIENT_ID', 'CLIENT_SECRET', 'SSO_URL', 'SMILECONNECT_URL'].eve
     });
 
     it ('it should update an incident', function (done) {
+        if (!createdIncidentId) {
+            // needs the incident of the create test
+            this.skip();
+        }
         const ticketData = {
             data: {
                 summary: "New Incident Update"
             }
         }
-        smileconnectClient.updateTicket('incidents', incidentId, ticketData).then(result => {
+        smileconnectClient.updateTicket('incidents', createdIncidentId, ticketData).then(result => {
             log.debug('result', result)
             ticketBaseCheck(result)
+            result.data.id.should.equal(createdIncidentId)
             done();
         }).catch(error => {
             done(error)
