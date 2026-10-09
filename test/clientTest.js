@@ -801,8 +801,11 @@ describe('SMILEconnect client (mock server)', function () {
             wrapped.status.should.equal(200);
             wrapped.body.should.equal('<html>login</html>');
             wrapped.message.should.contain('without JSON');
-            // script endpoints may answer text
-            (await client.callScriptEndpoint('x', {}, {throwOnError: true})).should.equal('<html>login</html>');
+            // script endpoints may answer text, but an HTML page is no answer of the API
+            const html = await rejection(client.callScriptEndpoint('x', {}, {throwOnError: true}));
+            html.should.be.instanceOf(sc.SmileConnectError);
+            mock.handler = () => ({status: 200, body: 'plain answer', headers: {'Content-Type': 'text/plain'}});
+            (await client.callScriptEndpoint('x', {}, {throwOnError: true})).should.equal('plain answer');
         });
 
         it('returns only a plain file name from Content-Disposition', async function () {
@@ -853,6 +856,146 @@ describe('SMILEconnect client (mock server)', function () {
             mock.handler = () => ({status: 200, body: {openapi: '3.0.0'}});
             (await client.getOpenApi({throwOnError: true})).should.deep.equal({openapi: '3.0.0'});
             mock.last().path.should.equal('/v1/openapi/test-client');
+        });
+    });
+
+    describe('review fixes 3', function () {
+        async function rejection(promise) {
+            try {
+                await promise;
+            } catch (e) {
+                return e;
+            }
+            throw new Error('expected a rejection');
+        }
+
+        it('refuses the ids "", "." and ".." before any request', async function () {
+            const calls = [
+                () => client.getTicket('incidents', ''),
+                () => client.getTicket('incidents', '.'),
+                () => client.updateTicketTask('incidents', 'INC1', '..', {data: {status: 'Closed'}}),
+                () => client.createTaskWorklog('incidents', 'INC1', '..', {data: {}}),
+                () => client.uploadTaskWorklogAttachment('incidents', 'INC1', '..', 'WLG1', 1, 'x'),
+                () => client.updateCustomFormRecord('..', '..', {data: {}}),
+                () => client.callScriptEndpoint('.', {})
+            ];
+            for (const call of calls) {
+                (await rejection(call())).message.should.contain('invalid id');
+            }
+            mock.requests.length.should.equal(0);
+            // dots inside an id are fine
+            await client.getTicket('incidents', 'a..b');
+            mock.last().path.should.equal('/v1/incidents/a..b');
+        });
+
+        it('an error status with an empty body rejects as in 1.9.2, or throws with throwOnError', async function () {
+            for (const status of [401, 500, 503]) {
+                mock.handler = () => ({status});
+                const error = await rejection(client.updateTicket('incidents', 'INC1', {data: {}}));
+                error.name.should.equal('FetchError');
+                error.type.should.equal('invalid-json');
+                const wrapped = await rejection(client.updateTicket('incidents', 'INC1', {data: {}}, {throwOnError: true}));
+                wrapped.should.be.instanceOf(sc.SmileConnectError);
+                wrapped.status.should.equal(status);
+                expect(wrapped.body).to.equal(null);
+                // also where text answers are allowed
+                (await rejection(client.callScriptEndpoint('x', {}))).name.should.equal('FetchError');
+            }
+        });
+
+        it('uploads: text only counts as success with a 2xx status and when it is no HTML page', async function () {
+            const upload = opts => client.uploadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1, 'x', opts);
+            mock.handler = () => ({status: 200, body: '<html><body>Please log in</body></html>', headers: {'Content-Type': 'text/html'}});
+            (await rejection(upload({throwOnError: true}))).should.be.instanceOf(sc.SmileConnectError);
+            (await rejection(upload())).name.should.equal('FetchError');
+            mock.handler = () => ({status: 502, body: '<html>Bad Gateway</html>', headers: {'Content-Type': 'text/html'}});
+            (await rejection(upload())).name.should.equal('FetchError');
+            (await rejection(upload({throwOnError: true}))).status.should.equal(502);
+            mock.handler = () => ({status: 413, body: 'Request Entity Too Large', headers: {'Content-Type': 'text/plain'}});
+            (await rejection(upload())).name.should.equal('FetchError');
+            mock.handler = () => ({status: 200, body: "['WLG1':'success']", headers: {'Content-Type': 'text/plain'}});
+            (await upload()).should.equal("['WLG1':'success']");
+            mock.handler = () => ({status: 400, body: {error: 'no file'}});
+            (await upload()).should.deep.equal({error: 'no file'});
+        });
+
+        it('sends falsy bodies only to script endpoints and never a body with GET', async function () {
+            // the module functions use the session of the instance created last
+            new sc.SmileconnectClient({clientId: 'module-falsy', secret: 's', ssoUrl: mock.ssoUrl, smileConnectUrl: mock.baseUrl});
+            await apiUtils.doApiRequest(mock.baseUrl + '/v1/version', 'GET', {}, '');
+            mock.last().body.length.should.equal(0);
+            await apiUtils.doApiRequest(mock.baseUrl + '/v1/version', 'GET', {}, {a: 1});
+            mock.last().body.length.should.equal(0);
+            await client.updateTicket('incidents', 'INC1', false);
+            mock.last().body.length.should.equal(0);
+            await client.createTicket('incidents', 0);
+            mock.last().body.length.should.equal(0);
+            await client.callScriptEndpoint('x', 0);
+            mock.last().body.toString().should.equal('0');
+        });
+
+        it('takes paging values given as strings, and refuses values that are no numbers', async function () {
+            const all = Array.from({length: 40}, (_, i) => ({id: i}));
+            mock.handler = req => {
+                const offset = Number(req.query.offset);
+                return {status: 200, body: {data: all.slice(offset, offset + Number(req.query.limit))}};
+            };
+            const result = await client.listTicketsAll('incidents', {offset: '10', pageSize: '5', maxItems: '12'});
+            result.map(r => r.id).should.deep.equal(all.slice(10, 22).map(r => r.id));
+            mock.requests.map(r => r.query.offset).should.deep.equal(['10', '15', '20']);
+            mock.reset();
+            for (const paging of [{offset: 'abc'}, {pageSize: 0}, {maxItems: -1}, {pageSize: 2.5}]) {
+                (await rejection(client.listTicketsAll('incidents', paging))).message.should.match(/must be a whole number/);
+            }
+            mock.requests.length.should.equal(0);
+        });
+
+        it('keeps the reason when the identity provider cannot be reached', async function () {
+            const c = new sc.SmileconnectClient({
+                clientId: 'unreachable', secret: 'y', ssoUrl: 'http://127.0.0.1:1/sso', smileConnectUrl: mock.baseUrl
+            });
+            // default: the error of 1.9.2
+            (await rejection(c.getVersion())).should.equal('SSO Client not ready. Cannot get token');
+            const error = await rejection(c.getVersion({throwOnError: true}));
+            error.should.be.instanceOf(sc.SmileConnectError);
+            error.cause.should.be.instanceOf(Error);
+            error.code.should.equal('ECONNREFUSED');
+            error.message.should.contain('SSO Client not ready');
+            error.message.should.contain('discover');
+        });
+
+        it('keeps the reason when the identity provider refuses the grant', async function () {
+            mock.tokenError = {status: 401, body: {error: 'invalid_client', error_description: 'bad secret'}};
+            const c = new sc.SmileconnectClient({
+                clientId: 'refused', secret: 'wrong', ssoUrl: mock.ssoUrl, smileConnectUrl: mock.baseUrl
+            });
+            const error = await rejection(c.getVersion({throwOnError: true}));
+            error.should.be.instanceOf(sc.SmileConnectError);
+            error.cause.error.should.equal('invalid_client');
+            error.message.should.contain('invalid_client');
+            mock.requests.length.should.equal(0);
+        });
+
+        describe('file name of a download', function () {
+            async function nameFor(disposition) {
+                mock.handler = () => ({status: 200, body: Buffer.from('x'), headers: {'Content-Disposition': disposition}});
+                return (await client.downloadTicketWorklogAttachment('incidents', 'INC1', 'WLG1', 1)).fileName;
+            }
+
+            it('replaces C1 and bidi control characters', async function () {
+                (await nameFor("attachment; filename*=UTF-8''invoice%C2%85%E2%80%AEfdp.exe")).should.equal('invoice__fdp.exe');
+                (await nameFor("attachment; filename*=UTF-8''a%E2%81%A6b%E2%80%8Fc.txt")).should.equal('a_b_c.txt');
+            });
+
+            it('decodes filename* in ISO-8859-1', async function () {
+                (await nameFor("attachment; filename*=iso-8859-1'de'%E4rger.txt")).should.equal('ärger.txt');
+            });
+
+            it('parses a long header quickly', async function () {
+                const start = Date.now();
+                await nameFor('attachment; filename*=' + ' '.repeat(16000) + 'x');
+                (Date.now() - start).should.be.below(100);
+            });
         });
     });
 

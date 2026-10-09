@@ -7,6 +7,7 @@ const http = require('http');
  * mock.requests         every API request: {method, path, query, headers, body (Buffer), json}
  * mock.tokenRequests    every token request: {clientId, secret}
  * mock.discoveryRequests number of issuer discovery requests
+ * mock.tokenError       {status, body}: the token endpoint refuses the grant (default null)
  * mock.handler          function(req) -> {status, body, headers} (body: object/array = JSON, string/Buffer = raw)
  *                       default: 200 {"data":{}}
  */
@@ -15,6 +16,7 @@ async function startMock() {
         requests: [],
         tokenRequests: [],
         discoveryRequests: 0,
+        tokenError: null,
         handler: () => ({status: 200, body: {data: {}}}),
         tokenLifetime: 300
     };
@@ -49,6 +51,9 @@ async function startMock() {
                     secret = form.get('client_secret');
                 }
                 mock.tokenRequests.push({clientId, secret});
+                if (mock.tokenError) {
+                    return sendJson(res, mock.tokenError.status, mock.tokenError.body);
+                }
                 return sendJson(res, 200, {
                     access_token: `token-for-${clientId}-${secret}`,
                     token_type: 'Bearer',
@@ -101,6 +106,7 @@ async function startMock() {
         mock.requests.length = 0;
         mock.tokenRequests.length = 0;
         mock.discoveryRequests = 0;
+        mock.tokenError = null;
         mock.handler = () => ({status: 200, body: {data: {}}});
     };
     mock.last = () => mock.requests[mock.requests.length - 1];

@@ -42,7 +42,7 @@ Unknown keys in the configuration (for example `type` in an adapter configuratio
 ## Conventions
 
 * **Bodies.** Methods that write take the body exactly as the API expects it, including the envelope: `{ data: { ... } }`. The client adds nothing. Script endpoints take any body.
-* **Results.** Every method resolves to the parsed JSON answer of the API (`{ data, included, links }`), `null` if the answer has no body (for example 204). Attachment downloads resolve to `{ data: Buffer, fileName, contentType, status }`.
+* **Results.** Every method resolves to the parsed JSON answer of the API (`{ data, included, links }`), `null` if a success answer has no body (for example 204). Attachment downloads resolve to `{ data: Buffer, fileName, contentType, status }`.
 * **Options.** The last parameter of every method is an optional `options` object:
 
 | Option | Effect |
@@ -61,7 +61,7 @@ The attributes (`id`, `summary`, ...) are those of *your* client. The specificat
 
 ## Error handling
 
-By default (as in 1.9.x) a call resolves to the JSON body of the answer, also when the API answered with an error status (for example `{ error: '...' }` or `{ data: {} }` for 404). A network error, or an answer that is no JSON (for example the HTML page of a proxy), rejects with the error of `node-fetch`.
+By default (as in 1.9.x) a call resolves to the JSON body of the answer, also when the API answered with an error status (for example `{ error: '...' }` or `{ data: {} }` for 404). A network error, an answer that is no JSON (for example the HTML page of a proxy) and an error status without body reject with the error of `node-fetch`.
 
 With `throwOnError: true`, on the client or per call (a per-call value wins), every HTTP status of 400 and above rejects with a `SmileConnectError`:
 
@@ -115,7 +115,7 @@ const found = await smileconnect.searchTickets('incidents', {
 
 ### Paging
 
-The API caps `limit` silently (client and installation limits). The helpers therefore advance by the number of records received and stop at the first empty page (one extra request). Sort by a stable attribute while paging. If a page is exactly the same as the page before, the helpers throw a `SmileConnectError` instead of looping (the endpoint seems to ignore `offset`); with `fields` that are not unique this can happen for real data, so include a unique field such as `id`.
+The API caps `limit` silently (client and installation limits). The helpers therefore advance by the number of records received and stop at the first empty page (one extra request). Sort by a stable attribute while paging. If a page is exactly the same as the page before, the helpers throw a `SmileConnectError` instead of looping (the endpoint seems to ignore `offset`); with `fields` that are not unique this can happen for real data, so include a unique field such as `id`. `pageSize`, `maxItems` and `offset` may also be numeric strings.
 
 ```javascript
 // all records as an array; pageSize defaults to 100, maxItems is optional
@@ -168,7 +168,7 @@ await smileconnect.createTaskWorklog('incidents', 'INC000000001401', 'TAS0000000
 
 ## Attachments
 
-A worklog has three attachment slots (1 to 3). Files are sent as `multipart/form-data` in the field `file`. A file is a `Buffer`, a string, or an object `{ data, filename, contentType }` (`data` as Buffer or string; `encoding: 'base64'` decodes a base64 string). Files are limited by `MAX_FILESIZE` of the installation (default 5 MB; larger uploads get HTTP 413).
+A worklog has three attachment slots (1 to 3). Files are sent as `multipart/form-data` in the field `file`. A file is a `Buffer`, a string, or an object `{ data, filename, contentType }` (`data` as Buffer or string; `encoding: 'base64'` decodes a base64 string). Files are limited by `MAX_FILESIZE` of the installation (default 5 MB; larger uploads get HTTP 413). An upload resolves to the answer of the API, which may be text; an error status, or an HTML page instead of an answer, is handled as in every other method.
 
 ```javascript
 const fs = require('fs')
@@ -196,7 +196,7 @@ await smileconnect.downloadCustomFormAttachment('enrollments', '000000000000115'
 
 `detectMime: true` makes the API return the real content type; without it the type is `application/octet-stream`. If the download fails (for example an empty slot) the result is `{ status, error, body }` without `data` (`error` is the message, `body` the error body of the API), or a `SmileConnectError` with `throwOnError`.
 
-`fileName` comes from the `Content-Disposition` header of the answer, that is from whoever uploaded the file. It is reduced to a plain file name (no directories, `:` and control characters replaced) and is `undefined` if nothing is left. Still join it to a directory of your choice instead of using it as a path.
+`fileName` comes from the `Content-Disposition` header of the answer, that is from whoever uploaded the file. It is reduced to a plain file name (no directories; `:`, control characters and bidi controls such as U+202E replaced) and is `undefined` if nothing is left. Still join it to a directory of your choice instead of using it as a path.
 
 The `filename` of an upload is sent without directories. Names with characters outside ASCII are sent as UTF-8 (like a browser does) plus `filename*` (RFC 5987).
 
@@ -257,7 +257,7 @@ const found = await smileconnect.searchCustomFormRecords('enrollments', { search
 
 ## Script endpoints
 
-The body is sent as it is (no `data` envelope unless the endpoint wants one), also `false`, `0` or `''`; without a body (or with `null`) nothing is sent. The answer is exactly what the script returns, `null` if the script returns nothing. The API answers `POST` only; `options.method` exists for the case that this changes.
+The body is sent as it is (no `data` envelope unless the endpoint wants one), also `false`, `0` or `''`; without a body (or with `null`) nothing is sent. The answer is exactly what the script returns (also text), `null` if the script returns nothing. An HTML page is not taken as answer (it comes from a proxy or gateway). The API answers `POST` only; `options.method` exists for the case that this changes.
 
 ```javascript
 const answer = await smileconnect.callScriptEndpoint('hello', { name: 'Allen' })

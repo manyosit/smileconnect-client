@@ -6,7 +6,15 @@ const allowedTemplateTypes = allowedTicketTypes.concat(['tasks'])
 const ssoUtils = require('./ssoUtils')
 const { SmileConnectError } = require('./errors')
 
-const enc = encodeURIComponent;
+// Path segment of an id. '', '.' and '..' are refused: the URL would drop or resolve them
+// (also encoded as %2e) and address another resource, e.g. the ticket instead of its task.
+function enc(id) {
+    const value = String(id);
+    if (value === '' || value === '.' || value === '..') {
+        throw new Error(`invalid id "${value}": an id must not be empty, "." or ".."`);
+    }
+    return encodeURIComponent(value);
+}
 
 function checkTicketType(ticketType) {
     if (!allowedTicketTypes.includes(ticketType)) {
@@ -39,6 +47,18 @@ function prepareSearch(searchBody, options) {
         body.offset = opts.offset;
     }
     return {body, options: withoutPaging(opts)};
+}
+
+// Paging values may come as strings (scripts, configuration): '10' + 5 must not become '105'.
+function pagingNumber(value, name, fallback, min) {
+    if (value === undefined || value === null) {
+        return fallback;
+    }
+    const number = Number(value);
+    if (!(Number.isInteger(number) || number === Infinity) || number < min) {
+        throw new Error(`${name} must be a whole number >= ${min}, got ${value}`);
+    }
+    return number;
 }
 
 function encodeRfc5987(value) {
@@ -94,12 +114,13 @@ class SmileconnectClient {
             ssoUtils.setDefaultSession(this.sso);
             this.sso.setup().catch(error => log.error('SSO setup failed', error));
             this.getToken = () => this.sso.getAccessToken();
+            this.tokenErrorCause = () => this.sso.setupError;
         }
     }
 
     /**
      * Central request. path starts with /v1/...
-     * opts: {data, rawBody, auth, response}
+     * opts: {data, rawBody, bodyAsIs, auth, response}
      */
     _request(method, requestPath, options, opts) {
         const o = opts || {};
@@ -113,9 +134,11 @@ class SmileconnectClient {
             options,
             data: o.data,
             rawBody: o.rawBody,
+            bodyAsIs: o.bodyAsIs,
             auth: o.auth,
             response: o.response,
             getToken: this.getToken,
+            tokenErrorCause: this.tokenErrorCause,
             throwOnError
         });
     }
@@ -199,9 +222,9 @@ class SmileconnectClient {
      */
     async * paginate(pageFn, paging) {
         const p = paging || {};
-        const pageSize = p.pageSize || 100;
-        const maxItems = p.maxItems === undefined || p.maxItems === null ? Infinity : p.maxItems;
-        let offset = p.offset || 0;
+        const pageSize = pagingNumber(p.pageSize, 'pageSize', 100, 1);
+        const maxItems = pagingNumber(p.maxItems, 'maxItems', Infinity, 0);
+        let offset = pagingNumber(p.offset, 'offset', 0, 0);
         let count = 0;
         let lastPage;
         while (count < maxItems) {
@@ -534,7 +557,7 @@ class SmileconnectClient {
         delete opts.method;
         const hasBody = method !== 'GET' && method !== 'HEAD';
         return this._request(method, `/v1/scriptEndpoints/${enc(name)}`, opts,
-            {data: hasBody ? body : undefined, response: 'lenient'})
+            {data: hasBody ? body : undefined, bodyAsIs: true, response: 'lenient'})
     }
 
     // ------------------------------------------------------------------- misc

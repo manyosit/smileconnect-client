@@ -17,6 +17,8 @@ class SsoSession {
         this.tokenSet = null;
         this.expiryMargin = 0;
         this.apiClient = null;
+        // why the last discovery failed (the token error itself is a plain string, as in 1.9.2)
+        this.setupError = null;
         this.pendingSetup = null;
         this.pendingGrant = null;
     }
@@ -52,8 +54,10 @@ class SsoSession {
                     client_id: this.clientId,
                     client_secret: this.clientSecret
                 });
+                this.setupError = null;
             } catch (error) {
                 log.error("Can't discover issuer", error)
+                this.setupError = error;
             }
         }
         return this.apiClient;
